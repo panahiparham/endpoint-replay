@@ -22,13 +22,13 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from agents.dqn import (
+from agents.nets import (
     AgentTrainOutput,
     NatureCNN,
     QNetwork,
     RunnerState,
     TimeStep,
-    _polyak_update,
+    polyak_update,
 )
 from envs.gym_env import DiscreteActionSpace, GymEnv
 
@@ -211,7 +211,7 @@ def make_train(
 
             target_q = jax.lax.cond(
                 t % config.TARGET_NETWORK_FREQUENCY == 0,
-                lambda: _polyak_update(target_q, q, config.TAU),
+                lambda: polyak_update(target_q, q, config.TAU),
                 lambda: target_q,
             )
 
