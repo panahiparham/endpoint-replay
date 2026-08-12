@@ -1,10 +1,10 @@
 """
-Run: DQN and Random Agent on Pinball(Easy) Environment.
+Run: DDQN on Pinball(Easy) Environment.
 
 Cheat sheet:
     Plan: uv run experiments/pinball/run.py plan
     Sweep: uv run experiments/pinball/run.py sweep --num-workers 6
-    Single: uv run experiments/pinball/run.py single --component dqn_easy
+    Single: uv run experiments/pinball/run.py single --component ddqn_easy
     Merge Results (sweep does it for you): uv run experiments/pinball/run.py consolidate
 """
 
