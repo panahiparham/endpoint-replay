@@ -2,23 +2,19 @@
 
 One component on Atari Pong:
 
-* ``dqn_pong`` - DQN reproducing ``qrc-at-
+* ``ddqn_pong`` - Double DQN on the hyperparameters of ``qrc-at-
 scale/experiments/atari-20m/Pong/dqn.json`` (2 seeds).
-
-The ``random_pong`` baseline is dropped for now (see git history to restore it) -
-add it back once it has actually been run, so ``analysis.ipynb`` has both series'
-data to overlay.
 
 Atari's ale-py env is a stateful FFI that can't be ``jax.vmap``'d, so the component
 sets ``vmappable=False`` (the harness loops ``main`` per seed) and ``shard_size=1``
 (one ~GB-scale replay buffer per process).
 
 ⚠️ Faithful to the json this is **cluster-scale** (5M steps) - meant for Linux-CUDA,
-not a laptop. ``dqn_pong``'s ``BUFFER_SIZE`` is 100k rather than the json's 1M: a
+not a laptop. ``ddqn_pong``'s ``BUFFER_SIZE`` is 100k rather than the json's 1M: a
 1M×(84,84,4) uint8 replay needs ~56GB obs+next_obs, more than a Vulcan L40S's 48GB
 (see ``FUTURE.md``). Needs the ``atari`` extra; see ``scripts/install_ale_wheel.sh``.
 For a quick local check, override on the CLI:
-    uv run python experiments/atari_20m/run.py single --component dqn_pong \\
+    uv run python experiments/atari_20m/run.py single --component ddqn_pong \\
         --AGENT-HYPERS.TOTAL-TIMESTEPS 300 --AGENT-HYPERS.BUFFER-SIZE 1000 --seeds 0
 """
 
@@ -32,7 +28,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from agents.dqn import DQNConfig
+from agents.ddqn import DDQNConfig
 from environments.atari import AtariConfig
 from experiment import Component
 from main import ExperimentConfig
@@ -49,11 +45,11 @@ _ATARI_PONG = AtariConfig(
 
 COMPONENTS = [
     Component(
-        name="dqn_pong",
+        name="ddqn_pong",
         base=ExperimentConfig(
-            AGENT="dqn",
+            AGENT="ddqn",
             ENV="atari",
-            AGENT_HYPERS=DQNConfig(
+            AGENT_HYPERS=DDQNConfig(
                 TOTAL_TIMESTEPS=5_000_000,       # json: TOTAL_TIMESTEPS
                 LR=6.25e-05,                     # json: metaParameters.LR
                 ADAM_EPS=1.5e-4,                 # json: metaParameters.ADAM_EPS
