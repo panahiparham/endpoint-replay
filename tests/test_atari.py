@@ -1,13 +1,13 @@
-"""Tests for the Atari env wrapper and DQN-on-image-obs.
+"""Tests for the Atari env wrapper and DDQN-on-image-obs.
 
 Logic tests drive ``AtariEnvLike`` against a fake vector env reproducing ale-py's
 ``.xla()`` FFI contract (opaque ``(8,)`` handle, NEXT_STEP autoreset), and run the
-``nature_cnn`` DQN on a fake image env - all without ale-py, so they run anywhere.
+``nature_cnn`` DDQN on a fake image env - all without ale-py, so they run anywhere.
 The real ale-py tests self-skip when the XLA build is not installed.
 
 Note: on macOS-CPU, ale-py's XLA FFI can intermittently *segfault* when the
-episode-boundary reset consume runs under the DQN graph (it is solid on
-Linux-CUDA, where Atari training actually happens). The real DQN smoke therefore
+episode-boundary reset consume runs under the DDQN graph (it is solid on
+Linux-CUDA, where Atari training actually happens). The real DDQN smoke therefore
 runs in a subprocess and skips on such a crash rather than taking down pytest.
 """
 
@@ -152,13 +152,12 @@ def test_num_envs_gt_one_rejected():
         AtariEnvLike(_FakeVectorEnv(num_envs=2))
 
 
-@pytest.mark.parametrize("agent_name", ["random_buffered", "dqn"])
-def test_truncated_transition_stores_true_obs(agent_name):
+def test_truncated_transition_stores_true_obs():
     """**Regression test for issue #1.** A *truncated* Atari transition must store the
     true
     pre-truncation frame as ``next_obs``, not the fresh episode's first frame. This is
     the
-    case DQN's ``(1 - terminated)`` mask does NOT hide: a truncated target bootstraps,
+    case DDQN's ``(1 - terminated)`` mask does NOT hide: a truncated target bootstraps,
     so a
     reset observation here would corrupt it.
 
@@ -169,15 +168,11 @@ def test_truncated_transition_stores_true_obs(agent_name):
     CUTOFF = 4
     # truncations only
     env = AtariEnvLike(_FakeVectorEnv(period=1000), episode_cutoff=CUTOFF)
-    if agent_name == "random_buffered":
-        from agents.random_buffered import RandomBufferConfig, make_train
-        cfg = RandomBufferConfig(TOTAL_TIMESTEPS=9, BUFFER_SIZE=16, BATCH_SIZE=2)
-    else:
-        from agents.dqn import DQNConfig, make_train
-        cfg = DQNConfig(TOTAL_TIMESTEPS=9, BUFFER_SIZE=16, BATCH_SIZE=2,
-                        LEARNING_STARTS=9,
-                        # no training: pure buffer inspection
-                        NETWORK_PRESET="nature_cnn")
+    from agents.ddqn import DDQNConfig, make_train
+    cfg = DDQNConfig(TOTAL_TIMESTEPS=9, BUFFER_SIZE=16, BATCH_SIZE=2,
+                     LEARNING_STARTS=9,
+                     # no training: pure buffer inspection
+                     NETWORK_PRESET="nature_cnn")
     out = jax.block_until_ready(jax.jit(make_train(cfg, env, None))(jax.random.key(0)))
 
     bs = out["runner_state"].buffer_state
@@ -204,10 +199,10 @@ def test_truncated_transition_stores_true_obs(agent_name):
     np.testing.assert_array_equal(obs[ends + 1], [0, 0])
 
 
-# --- DQN on image obs in jit (fake env; reliable, no ale-py) -----------------
+# --- DDQN on image obs in jit (fake env; reliable, no ale-py) ----------------
 
 class _FakeImageEnv:
-    """A GymEnv with (84,84,4) uint8 obs, to exercise the ``nature_cnn`` DQN (uint8
+    """A GymEnv with (84,84,4) uint8 obs, to exercise the ``nature_cnn`` DDQN (uint8
     replay,
     agent-side conditional reset) under ``jax.jit``. Like the real envs it returns the
     true
@@ -235,15 +230,15 @@ class _FakeImageEnv:
         return obs, t, jnp.float32(1.0), term, jnp.asarray(False), {}
 
 
-def test_dqn_nature_cnn_jit_smoke():
-    from agents.dqn import DQNConfig, make_train
+def test_ddqn_nature_cnn_jit_smoke():
+    from agents.ddqn import DDQNConfig, make_train
 
     env = _FakeImageEnv()
     train = make_train(
-        DQNConfig(TOTAL_TIMESTEPS=120, BUFFER_SIZE=200, BATCH_SIZE=8,
-                  LEARNING_STARTS=10,
-                  TRAIN_FREQUENCY=2, TARGET_NETWORK_FREQUENCY=20, EPSILON_FRACTION=0.5,
-                  NETWORK_PRESET="nature_cnn"),
+        DDQNConfig(TOTAL_TIMESTEPS=120, BUFFER_SIZE=200, BATCH_SIZE=8,
+                   LEARNING_STARTS=10,
+                   TRAIN_FREQUENCY=2, TARGET_NETWORK_FREQUENCY=20,
+                   EPSILON_FRACTION=0.5, NETWORK_PRESET="nature_cnn"),
         env, None,
     )
     out = jax.jit(train)(jax.random.key(0))
@@ -266,20 +261,20 @@ def _atari_config(**kw):
     from environments.atari import AtariConfig
     from main import ExperimentConfig
 
-    return ExperimentConfig(AGENT="dqn", ENV="atari", ENV_HYPERS=AtariConfig(), **kw)
+    return ExperimentConfig(AGENT="ddqn", ENV="atari", ENV_HYPERS=AtariConfig(), **kw)
 
 
 def test_atari_component_rejects_vmappable():
     from experiment import Component
 
     with pytest.raises(ValueError, match="vmappable=False"):
-        Component(name="dqn_pong", base=_atari_config(), seeds=[0], shard_size=1)
+        Component(name="ddqn_pong", base=_atari_config(), seeds=[0], shard_size=1)
 
 
 def test_atari_component_accepts_vmappable_false():
     from experiment import Component
 
-    comp = Component(name="dqn_pong", base=_atari_config(), seeds=[0],
+    comp = Component(name="ddqn_pong", base=_atari_config(), seeds=[0],
                      shard_size=1, vmappable=False)
     assert comp.vmappable is False
 
@@ -289,7 +284,7 @@ def test_atari_reached_only_through_a_sweep_is_rejected():
     from experiment import Component
     from main import ExperimentConfig
 
-    base = ExperimentConfig(AGENT="dqn", ENV="acrobot", ENV_HYPERS=AcrobotConfig())
+    base = ExperimentConfig(AGENT="ddqn", ENV="acrobot", ENV_HYPERS=AcrobotConfig())
     with pytest.raises(ValueError, match="'atari'"):
         Component(name="mixed", base=base,
                   sweep={"ENV": ["acrobot", "atari"]}, seeds=[0])
@@ -300,8 +295,8 @@ def test_vmappable_component_on_a_pure_env_is_allowed():
     from experiment import Component
     from main import ExperimentConfig
 
-    base = ExperimentConfig(AGENT="dqn", ENV="acrobot", ENV_HYPERS=AcrobotConfig())
-    assert Component(name="dqn_acrobot", base=base, seeds=[0, 1]).vmappable is True
+    base = ExperimentConfig(AGENT="ddqn", ENV="acrobot", ENV_HYPERS=AcrobotConfig())
+    assert Component(name="ddqn_acrobot", base=base, seeds=[0, 1]).vmappable is True
 
 
 # --- real ale-py XLA tests (skip if not installed) --------------------------
@@ -357,8 +352,7 @@ def test_atari_real_cutoff_is_exact_and_wrapper_owned():
 
 @ale_only
 def test_atari_real_truncated_transition_is_not_the_reset_obs():
-    """**Issue #1 end-to-end, against the real emulator.** Drive ``random_buffered``
-    over real
+    """**Issue #1 end-to-end, against the real emulator.** Drive ``ddqn`` over real
     ale and check the buffer at a truncation.
 
     The bug's exact signature was ``next_obs`` of the truncated transition being *the
@@ -367,7 +361,7 @@ def test_atari_real_truncated_transition_is_not_the_reset_obs():
     because the wrapper reset in-step and the agent then didn't reset. Now the boundary
     keeps
     the true pre-truncation frame, so those two must differ."""
-    from agents.random_buffered import RandomBufferConfig, make_train
+    from agents.ddqn import DDQNConfig, make_train
     from environments import ENVIRONMENTS
     from environments.atari import AtariConfig
 
@@ -375,7 +369,9 @@ def test_atari_real_truncated_transition_is_not_the_reset_obs():
     env, params = ENVIRONMENTS["atari"].build(
         AtariConfig(GAME="pong", EPISODE_CUTOFF=CUTOFF)
     )
-    cfg = RandomBufferConfig(TOTAL_TIMESTEPS=45, BUFFER_SIZE=64, BATCH_SIZE=2)
+    # LEARNING_STARTS past the horizon: no training, pure buffer inspection.
+    cfg = DDQNConfig(TOTAL_TIMESTEPS=45, BUFFER_SIZE=64, BATCH_SIZE=2,
+                     LEARNING_STARTS=45, NETWORK_PRESET="nature_cnn")
     out = jax.block_until_ready(
         jax.jit(make_train(cfg, env, params))(jax.random.key(0))
     )
@@ -418,14 +414,14 @@ def test_atari_env_real_jit_scan():
     assert rewards.shape == (40,)
 
 
-_REAL_DQN_SMOKE = """
+_REAL_DDQN_SMOKE = """
 import jax
-from agents.dqn import DQNConfig, make_train
+from agents.ddqn import DDQNConfig, make_train
 from environments import ENVIRONMENTS
 from environments.atari import AtariConfig
 env, p = ENVIRONMENTS["atari"].build(
     AtariConfig(GAME="pong", FRAMESKIP=4, STICKY_ACTIONS=0.25, EPISODE_CUTOFF=30))
-train = make_train(DQNConfig(TOTAL_TIMESTEPS=120, BUFFER_SIZE=200, BATCH_SIZE=8,
+train = make_train(DDQNConfig(TOTAL_TIMESTEPS=120, BUFFER_SIZE=200, BATCH_SIZE=8,
     LEARNING_STARTS=10, TRAIN_FREQUENCY=4, TARGET_NETWORK_FREQUENCY=30,
     EPSILON_FRACTION=0.5, NETWORK_PRESET="nature_cnn"), env, p)
 out = jax.jit(train)(jax.random.key(0)); jax.block_until_ready(out)
@@ -435,14 +431,14 @@ print("SMOKE_OK")
 
 
 @ale_only
-def test_dqn_atari_real_smoke():
-    """Real DQN + ale-py Pong under jit, in a subprocess so the known macOS-CPU
+def test_ddqn_atari_real_smoke():
+    """Real DDQN + ale-py Pong under jit, in a subprocess so the known macOS-CPU
     ale FFI segfault (at episode-boundary reset) skips instead of killing pytest."""
     env = {**os.environ, "JAX_PLATFORMS": "cpu", "PYTHONPATH": str(_REPO)}
-    r = subprocess.run([sys.executable, "-c", _REAL_DQN_SMOKE],
+    r = subprocess.run([sys.executable, "-c", _REAL_DDQN_SMOKE],
                        capture_output=True, text=True, env=env, cwd=str(_REPO))
     if r.returncode < 0 or "Bus error" in r.stderr or "Segmentation fault" in r.stderr:
-        pytest.skip("ale-py XLA DQN crashed on this platform "
+        pytest.skip("ale-py XLA DDQN crashed on this platform "
                     f"(macOS-CPU FFI flakiness): rc={r.returncode}")
     assert r.returncode == 0, r.stderr[-800:]
     assert "SMOKE_OK" in r.stdout

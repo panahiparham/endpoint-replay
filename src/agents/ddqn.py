@@ -1,7 +1,7 @@
 """Double DQN with an Equinox Q-network and Flashbax item buffer.
 
-Same PureJaxRL-style loop as :mod:`agents.dqn`, but the TD target decouples
-action selection from evaluation (van Hasselt et al., 2016):
+A PureJaxRL-style scan loop whose TD target decouples action selection from
+evaluation (van Hasselt et al., 2016):
 
     a* = argmax_a Q_online(s', a)
     y  = r + γ Q_target(s', a*)   (masked by ``(1 - terminated)``)

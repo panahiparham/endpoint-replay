@@ -58,14 +58,15 @@ def test_registered_as_vmappable():
     assert ENVIRONMENTS["catch"].vmappable is True
 
 
-def test_random_agent_vmapped_e2e():
-    from agents.random import RandomConfig
+def test_ddqn_agent_vmapped_e2e():
+    from agents.ddqn import DDQNConfig
     from main import ExperimentConfig, build
 
     config = ExperimentConfig(
-        AGENT="random",
+        AGENT="ddqn",
         ENV="catch",
-        AGENT_HYPERS=RandomConfig(TOTAL_TIMESTEPS=50),
+        AGENT_HYPERS=DDQNConfig(TOTAL_TIMESTEPS=50, BUFFER_SIZE=64, BATCH_SIZE=4,
+                                LEARNING_STARTS=50, HIDDEN_SIZE=8),
         ENV_HYPERS=CatchConfig(EPISODE_CUTOFF=10),
     )
     train = build(config)
@@ -78,13 +79,13 @@ def test_random_agent_vmapped_e2e():
     assert not np.asarray(m["terminated"]).any()
 
 
-def test_dqn_agent_e2e():
-    from agents.dqn import DQNConfig, make_train
+def test_ddqn_agent_e2e():
+    from agents.ddqn import DDQNConfig, make_train
 
     env, params = ENVIRONMENTS["catch"].build(CatchConfig(EPISODE_CUTOFF=10))
     train = make_train(
-        DQNConfig(TOTAL_TIMESTEPS=100, BUFFER_SIZE=200, BATCH_SIZE=8,
-                  LEARNING_STARTS=10, TARGET_NETWORK_FREQUENCY=20),
+        DDQNConfig(TOTAL_TIMESTEPS=100, BUFFER_SIZE=200, BATCH_SIZE=8,
+                   LEARNING_STARTS=10, TARGET_NETWORK_FREQUENCY=20),
         env, params,
     )
     out = jax.jit(train)(jax.random.key(0))

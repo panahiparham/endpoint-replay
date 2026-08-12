@@ -12,12 +12,11 @@ The RL contract this suite pins down:
 * **Agents reset on ``terminated | truncated``**, and *conditionally* (``lax.cond``,
   not a masked ``env.reset`` every step) - a stateful env like ale-py Atari cannot
   have ``reset`` called on non-boundary steps.
-* **Replay agents** (``random_buffered``, ``dqn``, ``ddqn``) store, for each transition,
-the
-  ``next_obs`` the agent actually *observed at that step* - the true terminal /
-  truncation observation - **before** that reset overwrites it, so a truncated
-  transition bootstraps from the right state.
-* **DQN / DDQN TD targets** mask the bootstrap with ``(1 - terminated)`` only, so a
+* **The replay agent** (``ddqn``) stores, for each transition, the ``next_obs``
+  the agent actually *observed at that step* - the true terminal / truncation
+  observation - **before** that reset overwrites it, so a truncated transition
+  bootstraps from the right state.
+* **The DDQN TD target** masks the bootstrap with ``(1 - terminated)`` only, so a
   *truncated* episode-end still bootstraps and a *terminated* one does not.
 * **Analysis** (``plotting.episode_returns``) segments episodes on either flag.
 
@@ -102,25 +101,13 @@ class FakeEnv:
 # --- helpers: run an agent, read its replay buffer --------------------------
 
 
-def _run_agent(agent, env, *, total, buffer_size=64, **overrides):
-    """Run one agent (`"random_buffered"`, `"dqn"`, or `"ddqn"`) on ``env`` and
-    return the jitted train output pytree."""
-    if agent == "random_buffered":
-        from agents.random_buffered import RandomBufferConfig, make_train
-        cfg = RandomBufferConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size,
-                                 BATCH_SIZE=2, **overrides)
-    elif agent == "dqn":
-        from agents.dqn import DQNConfig, make_train
-        cfg = DQNConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size, BATCH_SIZE=2,
-                        # no training: pure buffer
-                        LEARNING_STARTS=total, HIDDEN_SIZE=8, **overrides)
-    elif agent == "ddqn":
-        from agents.ddqn import DDQNConfig, make_train
-        cfg = DDQNConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size, BATCH_SIZE=2,
-                         # no training: pure buffer
-                         LEARNING_STARTS=total, HIDDEN_SIZE=8, **overrides)
-    else:
-        raise ValueError(agent)
+def _run_agent(env, *, total, buffer_size=64, **overrides):
+    """Run DDQN on ``env`` and return the jitted train output pytree."""
+    from agents.ddqn import DDQNConfig, make_train
+
+    cfg = DDQNConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size, BATCH_SIZE=2,
+                     # no training: pure buffer
+                     LEARNING_STARTS=total, HIDDEN_SIZE=8, **overrides)
     out = jax.jit(make_train(cfg, env, None))(jax.random.key(0))
     return jax.block_until_ready(out)
 
@@ -137,9 +124,6 @@ def _buffer(out):
         "terminated": np.asarray(exp.terminated).reshape(-1)[:n].astype(bool),
         "truncated": np.asarray(exp.truncated).reshape(-1)[:n].astype(bool),
     }
-
-
-BUFFER_AGENTS = ["random_buffered", "dqn", "ddqn"]
 
 
 # ===========================================================================
@@ -206,9 +190,8 @@ def test_gymnax_real_terminal_is_terminated_not_truncated():
 # ===========================================================================
 
 
-@pytest.mark.parametrize("agent", BUFFER_AGENTS)
 @pytest.mark.parametrize("mode", ["terminated", "truncated"])
-def test_buffer_stores_true_boundary_next_obs(agent, mode):
+def test_buffer_stores_true_boundary_next_obs(mode):
     """The transition at an episode boundary stores the *true* terminal/truncation
     observation as ``next_obs`` (captured before the agent's reset), and the *following*
     transition's ``obs`` is the reset obs.
@@ -217,7 +200,7 @@ def test_buffer_stores_true_boundary_next_obs(agent, mode):
     correct state - the most error-prone part of the loop.
     """
     env = FakeEnv(period=3, mode=mode)
-    buf = _buffer(_run_agent(agent, env, total=7))
+    buf = _buffer(_run_agent(env, total=7))
 
     flag = buf[mode]
     other = buf["truncated" if mode == "terminated" else "terminated"]
@@ -236,13 +219,12 @@ def test_buffer_stores_true_boundary_next_obs(agent, mode):
     assert buf["obs"][0] == FakeEnv.RESET_OBS
 
 
-@pytest.mark.parametrize("agent", BUFFER_AGENTS)
-def test_buffer_next_obs_matches_within_episode_continuity(agent):
+def test_buffer_next_obs_matches_within_episode_continuity():
     """Within an episode the stored transitions chain: each ``next_obs`` equals the
     following transition's ``obs`` (continuity), and that chain breaks *only* at a
     reset (episode boundary)."""
     env = FakeEnv(period=4, mode="terminated")
-    buf = _buffer(_run_agent(agent, env, total=9))
+    buf = _buffer(_run_agent(env, total=9))
     ends = set(np.flatnonzero(buf["terminated"]))
     for i in range(len(buf["obs"]) - 1):
         if i in ends:
@@ -253,28 +235,28 @@ def test_buffer_next_obs_matches_within_episode_continuity(agent):
 
 
 # ===========================================================================
-# 3. DQN update rule: bootstrap masks terminated, not truncated
+# 3. DDQN update rule: bootstrap masks terminated, not truncated
 # ===========================================================================
 
 
-def _dqn_q_leaves(env, *, seed=0):
-    """Run DQN (with training on) on ``env`` and return its online-Q array leaves."""
+def _ddqn_q_leaves(env, *, seed=0):
+    """Run DDQN (with training on) on ``env`` and return its online-Q array leaves."""
     import equinox as eqx
 
-    from agents.dqn import DQNConfig, make_train
+    from agents.ddqn import DDQNConfig, make_train
 
-    cfg = DQNConfig(TOTAL_TIMESTEPS=80, BUFFER_SIZE=256, BATCH_SIZE=8,
-                    LEARNING_STARTS=8,
-                    TRAIN_FREQUENCY=1, TARGET_NETWORK_FREQUENCY=10, HIDDEN_SIZE=16,
-                    # all-random actions -> identical data
-                    EPSILON_START=1.0, EPSILON_END=1.0)
+    cfg = DDQNConfig(TOTAL_TIMESTEPS=80, BUFFER_SIZE=256, BATCH_SIZE=8,
+                     LEARNING_STARTS=8,
+                     TRAIN_FREQUENCY=1, TARGET_NETWORK_FREQUENCY=10, HIDDEN_SIZE=16,
+                     # all-random actions -> identical data
+                     EPSILON_START=1.0, EPSILON_END=1.0)
     out = jax.jit(make_train(cfg, env, None))(jax.random.key(seed))
     q = out["runner_state"].q
     return jax.tree.leaves(eqx.filter(q, eqx.is_array))
 
 
-def test_dqn_target_masks_terminated_not_truncated():
-    """DQN bootstraps on truncation but not termination. Two runs with *identical*
+def test_ddqn_target_masks_terminated_not_truncated():
+    """DDQN bootstraps on truncation but not termination. Two runs with *identical*
     dynamics/rewards/observations that differ only in whether the episode-end is
     labelled terminated vs truncated must learn different Q-functions - because the
     TD target is masked by ``(1 - terminated)`` only. If the code masked on ``done``
@@ -283,27 +265,27 @@ def test_dqn_target_masks_terminated_not_truncated():
     trunc_env = FakeEnv(period=4, mode="truncated")
 
     # sanity: the two runs really do differ only in the boundary flag
-    tb = _buffer(_run_agent("random_buffered", term_env, total=40))
-    ub = _buffer(_run_agent("random_buffered", trunc_env, total=40))
+    tb = _buffer(_run_agent(term_env, total=40))
+    ub = _buffer(_run_agent(trunc_env, total=40))
     np.testing.assert_array_equal(tb["obs"], ub["obs"])
     np.testing.assert_array_equal(tb["next_obs"], ub["next_obs"])
     assert tb["terminated"].any() and not tb["truncated"].any()
     assert ub["truncated"].any() and not ub["terminated"].any()
 
-    term_leaves = _dqn_q_leaves(term_env)
-    trunc_leaves = _dqn_q_leaves(trunc_env)
+    term_leaves = _ddqn_q_leaves(term_env)
+    trunc_leaves = _ddqn_q_leaves(trunc_env)
     # at least one weight differs -> the update rule distinguishes the two flags
     assert any(not np.allclose(a, b) for a, b in zip(term_leaves, trunc_leaves))
 
 
-def test_dqn_no_termination_matches_pure_truncation():
+def test_ddqn_no_termination_matches_pure_truncation():
     """A control: an env whose episode-ends are truncations learns the *same*
     Q-function as one whose ends carry no flag continuity difference - i.e.
     truncation is treated exactly like "keep bootstrapping". Here two truncating
     runs with the same seed are bit-identical, guarding against accidental
     dependence on episode index rather than the flag."""
-    a = _dqn_q_leaves(FakeEnv(period=4, mode="truncated"), seed=1)
-    b = _dqn_q_leaves(FakeEnv(period=4, mode="truncated"), seed=1)
+    a = _ddqn_q_leaves(FakeEnv(period=4, mode="truncated"), seed=1)
+    b = _ddqn_q_leaves(FakeEnv(period=4, mode="truncated"), seed=1)
     for x, y in zip(a, b):
         np.testing.assert_array_equal(x, y)
 

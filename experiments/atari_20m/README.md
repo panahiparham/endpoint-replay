@@ -40,13 +40,11 @@ uv run python experiments/atari_20m/run.py sweep --num-workers 2   # 2 seeds, on
 
 # Quick local check (tiny run - override the heavy hypers):
 uv run python experiments/atari_20m/run.py single --component ddqn_pong --seeds 0 \
-    AGENT-HYPERS:ddqn-config --AGENT-HYPERS.TOTAL-TIMESTEPS 500 --AGENT-HYPERS.BUFFER-SIZE 1000
+    --AGENT-HYPERS.TOTAL-TIMESTEPS 500 --AGENT-HYPERS.BUFFER-SIZE 1000
 ```
 
 > Per-hyper CLI overrides in `single` mode go through tyro on the selected
-> component's config - the agent's config type is a union (multiple agents share
-> this harness), so a subcommand (`AGENT-HYPERS:ddqn-config`) must select it before
-> its fields can be overridden. Editing `config.py` avoids the CLI entirely.
+> component's config. Editing `config.py` avoids the CLI entirely.
 
 ## Analysis
 

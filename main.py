@@ -26,7 +26,7 @@ import jax
 from agents import AGENTS, get_config as get_agent_config
 from environments import ENVIRONMENTS, get_config as get_env_config
 
-_DEFAULT_AGENT = "random_buffered"
+_DEFAULT_AGENT = "ddqn"
 _DEFAULT_ENV = "pinball"
 
 # Union of every registered agent/env config type, so tyro can parse whichever

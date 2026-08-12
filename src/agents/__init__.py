@@ -9,12 +9,6 @@ from __future__ import annotations
 from typing import Callable, NamedTuple
 
 from agents.ddqn import DDQNConfig, make_train as ddqn_make_train
-from agents.dqn import DQNConfig, make_train as dqn_make_train
-from agents.random import RandomConfig, make_train as random_make_train
-from agents.random_buffered import (
-    RandomBufferConfig,
-    make_train as random_buffered_make_train,
-)
 
 
 class AgentSpec(NamedTuple):
@@ -23,9 +17,6 @@ class AgentSpec(NamedTuple):
 
 
 AGENTS: dict[str, AgentSpec] = {
-    "random": AgentSpec(RandomConfig, random_make_train),
-    "random_buffered": AgentSpec(RandomBufferConfig, random_buffered_make_train),
-    "dqn": AgentSpec(DQNConfig, dqn_make_train),
     "ddqn": AgentSpec(DDQNConfig, ddqn_make_train),
 }
 
@@ -34,7 +25,7 @@ def get_config(name: str):
     """Build the default config object for a registered agent.
 
     Args:
-        name: A key of :data:`AGENTS`, e.g. ``"dqn"``.
+        name: A key of :data:`AGENTS`, e.g. ``"ddqn"``.
 
     Returns:
         A new instance of that agent's config dataclass, with defaults.
@@ -51,8 +42,5 @@ __all__ = [
     "AgentSpec",
     "AGENTS",
     "get_config",
-    "RandomConfig",
-    "RandomBufferConfig",
-    "DQNConfig",
     "DDQNConfig",
 ]
