@@ -166,7 +166,7 @@ fake envs both assert the current no-auto-reset convention.
 `next_obs` as full `(84,84,4)` uint8 arrays, and nothing in the codebase places
 the buffer off the default (GPU, when CUDA is present) device. At the json's
 faithful `BUFFER_SIZE=1_000_000` that is ~56 GB (28 GB obs + 28 GB next_obs),
-which does not fit on a Vulcan L40S (48 GB). `experiments/atari_20m`'s
+which does not fit on a Vulcan L40S (48 GB). `experiments/atari_50m`'s
 `dqn_pong` currently runs at `BUFFER_SIZE=100_000` (~5.3 GB) instead.
 
 ### Proposed fix
@@ -179,7 +179,7 @@ and device-placement complexity inside the `jax.lax.scan` training loop.
 
 ### Touch points
 `agents/dqn.py` (buffer construction, `add`/`sample`), and
-`experiments/atari_20m/config.py` (`BUFFER_SIZE` back to `1_000_000` once it
+`experiments/atari_50m/config.py` (`BUFFER_SIZE` back to `1_000_000` once it
 fits).
 
 ---

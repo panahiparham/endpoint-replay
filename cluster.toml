@@ -38,7 +38,7 @@ gpus = 0
 # Per-experiment overrides, keyed by the LABEL in that experiment's config.py. Each
 # table is merged over [slurm] above.
 
-[experiments.atari_20m]
+[experiments.atari_50m]
 # 12.5M-step Pong on the ale-py XLA env: genuinely CUDA-bound. Smoke-tested at
 # ~1,234 steps/s on an L40S -> ~2h49m for 12.5M steps, which leaves only ~10min
 # under the 3h priority-bucket cutoff. This harness has no mid-run checkpointing

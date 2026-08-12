@@ -1,4 +1,4 @@
-# atari_20m
+# atari_50m
 
 Atari **Pong**, 12.5M steps (50M frames), one component:
 
@@ -35,11 +35,11 @@ episode boundaries under the DDQN graph (stable on Linux-CUDA).
 ## Usage
 
 ```bash
-uv run python experiments/atari_20m/run.py plan
-uv run python experiments/atari_20m/run.py sweep --num-workers 2   # 2 seeds, one process each
+uv run python experiments/atari_50m/run.py plan
+uv run python experiments/atari_50m/run.py sweep --num-workers 2   # 2 seeds, one process each
 
 # Quick local check (tiny run - override the heavy hypers):
-uv run python experiments/atari_20m/run.py single --component ddqn_pong --seeds 0 \
+uv run python experiments/atari_50m/run.py single --component ddqn_pong --seeds 0 \
     --AGENT-HYPERS.TOTAL-TIMESTEPS 500 --AGENT-HYPERS.BUFFER-SIZE 1000
 ```
 

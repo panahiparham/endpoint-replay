@@ -1,4 +1,4 @@
-"""Components for the ``atari_20m`` experiment (Atari Pong, 12.5M steps).
+"""Components for the ``atari_50m`` experiment (Atari Pong, 12.5M steps).
 
 One component on Atari Pong:
 
@@ -14,7 +14,7 @@ not a laptop. ``ddqn_pong``'s ``BUFFER_SIZE`` is 100k rather than the json's 1M:
 1M×(84,84,4) uint8 replay needs ~56GB obs+next_obs, more than a Vulcan L40S's 48GB
 (see ``FUTURE.md``). Needs the ``atari`` extra; see ``scripts/install_ale_wheel.sh``.
 For a quick local check, override on the CLI:
-    uv run python experiments/atari_20m/run.py single --component ddqn_pong \\
+    uv run python experiments/atari_50m/run.py single --component ddqn_pong \\
         --AGENT-HYPERS.TOTAL-TIMESTEPS 300 --AGENT-HYPERS.BUFFER-SIZE 1000 --seeds 0
 """
 
@@ -33,7 +33,7 @@ from environments.atari import AtariConfig
 from experiment import Component
 from main import ExperimentConfig
 
-LABEL = "atari_20m"
+LABEL = "atari_50m"
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 _ATARI_PONG = AtariConfig(

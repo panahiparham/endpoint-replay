@@ -1,12 +1,12 @@
-"""Run the ``atari_20m`` experiment (component: ddqn_pong).
+"""Run the ``atari_50m`` experiment (component: ddqn_pong).
 
 Thin wrapper: hands ``main`` and this experiment's components to the shared harness
 with per-component ``vmappable=False`` (Atari's ale-py FFI can't be vmapped, so seeds
 run one per process). Each component saves to its own ``results/<name>.db`` store.
 Requires the Atari extra - see ``scripts/install_ale_wheel.sh``.
 
-    uv run python experiments/atari_20m/run.py plan
-    uv run python experiments/atari_20m/run.py sweep --num-workers 2   # 2 seeds,
+    uv run python experiments/atari_50m/run.py plan
+    uv run python experiments/atari_50m/run.py sweep --num-workers 2   # 2 seeds,
     one process each
 """
 
