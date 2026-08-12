@@ -1,4 +1,4 @@
-"""Components for the ``atari_20m`` experiment (Atari Pong, 5M steps).
+"""Components for the ``atari_20m`` experiment (Atari Pong, 12.5M steps).
 
 One component on Atari Pong:
 
@@ -9,7 +9,7 @@ Atari's ale-py env is a stateful FFI that can't be ``jax.vmap``'d, so the compon
 sets ``vmappable=False`` (the harness loops ``main`` per seed) and ``shard_size=1``
 (one ~GB-scale replay buffer per process).
 
-⚠️ Faithful to the json this is **cluster-scale** (5M steps) - meant for Linux-CUDA,
+⚠️ This is **cluster-scale** (12.5M steps / 50M frames) - meant for Linux-CUDA,
 not a laptop. ``ddqn_pong``'s ``BUFFER_SIZE`` is 100k rather than the json's 1M: a
 1M×(84,84,4) uint8 replay needs ~56GB obs+next_obs, more than a Vulcan L40S's 48GB
 (see ``FUTURE.md``). Needs the ``atari`` extra; see ``scripts/install_ale_wheel.sh``.
@@ -50,7 +50,7 @@ COMPONENTS = [
             AGENT="ddqn",
             ENV="atari",
             AGENT_HYPERS=DDQNConfig(
-                TOTAL_TIMESTEPS=5_000_000,       # json: TOTAL_TIMESTEPS
+                TOTAL_TIMESTEPS=12_500_000,      # 50M frames at FRAMESKIP=4
                 LR=6.25e-05,                     # json: metaParameters.LR
                 ADAM_EPS=1.5e-4,                 # json: metaParameters.ADAM_EPS
                 # json BUFFER_SIZE is 1_000_000, but obs+next_obs at (84,84,4)

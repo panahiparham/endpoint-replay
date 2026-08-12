@@ -39,9 +39,11 @@ gpus = 0
 # table is merged over [slurm] above.
 
 [experiments.atari_20m]
-# 5M-step Pong on the ale-py XLA env: genuinely CUDA-bound. Smoke-tested at
-# ~1,234 steps/s on an L40S -> ~68 min for 5M steps; 2h59m keeps margin while
-# staying under the 3h priority-bucket cutoff.
-time = "02:59:00"
+# 12.5M-step Pong on the ale-py XLA env: genuinely CUDA-bound. Smoke-tested at
+# ~1,234 steps/s on an L40S -> ~2h49m for 12.5M steps, which leaves only ~10min
+# under the 3h priority-bucket cutoff. This harness has no mid-run checkpointing
+# (one jax.lax.scan for the whole run), so a timeout loses the entire job rather
+# than a partial result - hence 5h in the 12h bucket, ~1.8x the estimate.
+time = "05:00:00"
 gpus = 1
 mem_per_cpu = "8G"

@@ -1,6 +1,6 @@
 # atari_20m
 
-Atari **Pong**, 5M steps, one component:
+Atari **Pong**, 12.5M steps (50M frames), one component:
 
 * `ddqn_pong` - Double DQN on the hyperparameters of
   `qrc-at-scale/experiments/atari-20m/Pong/dqn.json` (see `config.py` for the
@@ -21,10 +21,10 @@ Atari needs the optional `atari` extra with ale-py's PR-#707 XLA build:
 
 ## Scale ⚠️
 
-Faithful to the json this is **cluster-scale** - 5M agent steps. `ddqn_pong`'s
-`BUFFER_SIZE` is 100k rather than the json's 1M: obs+next_obs at (84,84,4) uint8
-would need ~56GB at 1M, more than a Vulcan L40S's 48GB (see `FUTURE.md`). It is
-meant for **Linux-CUDA**, not a laptop. Atari's ale-py env can't be `jax.vmap`'d,
+This is **cluster-scale** - 12.5M agent steps, i.e. 50M frames at `FRAMESKIP=4`.
+`ddqn_pong`'s `BUFFER_SIZE` is 100k rather than the json's 1M: obs+next_obs at
+(84,84,4) uint8 would need ~56GB at 1M, more than a Vulcan L40S's 48GB (see
+`FUTURE.md`). It is meant for **Linux-CUDA**, not a laptop. Atari's ale-py env can't be `jax.vmap`'d,
 so the component sets `vmappable=False` (the harness runs `main` per seed) and
 `shard_size=1` (one env + buffer per process); spread work across processes with
 `--num-workers`.
