@@ -1,0 +1,127 @@
+# Cluster and SLURM settings for `run.py ... --slurm` and `setup_cluster.py`.
+#
+# Committed, so a run is reproducible from the repo alone. Review [cluster] before
+# first use; the rest has working defaults for this repo's experiments.
+
+[cluster]
+# An ssh alias that works non-interactively. ControlMaster is recommended: Alliance
+# MFA then prompts once per session rather than once per command.
+host = "vulcan"
+
+# Everything the cluster knows about this project lives under here - the bare repo,
+# the two venvs, results and run snapshots. Deleting it is a full reset. The literal
+# $HOME is expanded by the *remote* shell, not this machine's.
+root = "$HOME/scratch/online-gsp"
+
+# The account jobs are charged to. Left empty, setup_cluster.py detects the candidates
+# from ~/projects on the cluster and tells you what to put here.
+account = "aip-amw8"
+
+[venvs]
+# uv extras baked into each of the two shared venvs. Both are deps-only and reused by
+# every commit; they re-sync automatically when uv.lock changes. Add "atari" to the
+# list that needs it (that also runs scripts/install_ale_wheel.sh).
+cpu = []
+gpu = ["cuda", "atari"]
+
+[slurm]
+# Applied to every job, per array task.
+time = "01:00:00"
+cpus_per_task = 1
+mem_per_cpu = "4G"
+
+# GPUs per task, and what selects the venv: 0 uses the cpu venv, anything higher uses
+# the gpu one. Keep it at 0 for this repo's jax MLP sweeps - they are CPU work, and an
+# 18-task array would otherwise hold 18 GPUs idle for the whole walltime.
+gpus = 0
+
+# Per-experiment overrides, keyed by the LABEL in that experiment's config.py. Each
+# table is merged over [slurm] above.
+
+[experiments.atari_20m]
+# 5M-step Pong on the ale-py XLA env: genuinely CUDA-bound. Smoke-tested at
+# ~1,234 steps/s on an L40S -> ~68 min for 5M steps; 2h59m keeps margin while
+# staying under the 3h priority-bucket cutoff.
+time = "02:59:00"
+gpus = 1
+mem_per_cpu = "8G"
+
+[experiments.atari_200m]
+# 50M steps (10x atari_20m) at the same ~1,234 steps/s -> ~11h15m estimated.
+# This harness has no mid-run checkpointing (one jax.lax.scan for the whole
+# run), so a timeout loses the entire job, not a partial result. That failure
+# mode is why this targets the 24h bucket (b3, same 148-node pool as the 72h
+# bucket) with real margin, rather than shaving to fit the 12h bucket (b2, a
+# larger 217-node pool but only ~45min/6% headroom over the estimate) - see
+# `sinfo` on Vulcan for the bucket boundaries. Revisit once this has actually
+# run once. mem_per_cpu unchanged: the real 5M-step run used ~2.3GB RSS, and
+# 50M steps' larger metrics arrays shouldn't push that past ~3GB.
+time = "23:59:00"
+gpus = 1
+mem_per_cpu = "8G"
+
+[experiments.classic_control]
+# One GPU per task, with shard_size=None in its config.py so a task is one vmap over
+# all 100 seeds. That is the shape a GPU wants: three tasks, three GPUs, rather than a
+# wide CPU array. mem is host memory for the process, not GPU memory.
+time = "03:00:00"
+cpus_per_task = 2
+mem = "32G"
+gpus = 1
+
+# The LR-tuning experiments: same shape as classic_control (shard_size=None, one vmap
+# per task) but far fewer seeds per config, so each task is much smaller - scaled down
+# accordingly. All six charge a separate account from the rest of the repo's
+# experiments.
+[experiments.acrobot_tuning]
+time = "01:00:00"
+cpus_per_task = 2
+mem = "16G"
+gpus = 1
+account = "aip-amw8"
+
+[experiments.cartpole_tuning]
+time = "01:00:00"
+cpus_per_task = 2
+mem = "16G"
+gpus = 1
+account = "aip-amw8"
+
+[experiments.mountaincar_tuning]
+time = "01:00:00"
+cpus_per_task = 2
+mem = "16G"
+gpus = 1
+account = "aip-amw8"
+
+[experiments.pinball_easy_tuning]
+account = "aip-amw8"
+
+[experiments.pinball_empty_tuning]
+account = "aip-amw8"
+
+[experiments.pinball_box_tuning]
+account = "aip-amw8"
+
+[experiments.catch_tuning]
+account = "aip-amw8"
+
+# Pinball (Medium) at 500k steps / 10 seeds per config, on the same global-default CPU
+# venv as pinball_easy_tuning. Time scaled up from the 1h default with the step count
+# (100k -> 200k -> 500k, each still looking like a needs-more-time problem).
+[experiments.pinball_medium_tuning]
+time = "05:00:00"
+account = "aip-amw8"
+
+# The weekly benchmark suite (benchmarks/core): Acrobot/MountainCar/Cartpole/
+# Pinball(easy)/Catch are all small envs with tiny MLP agents - CPU-only,
+# unlike the _tuning experiments this shape was copied from. The first real
+# dispatch (2026-08-12, sha 8b26f22) finished in 2m17s at worst and peaked at
+# 885MB (dqn_catch's 100k-transition buffer, vs 10k for the rest, despite
+# half the steps) - real usage is far below either number below. time
+# mirrors atari_20m's 2h59m: margin against a slow/contended run while
+# staying under Vulcan's 3h priority-bucket cutoff (see `sinfo`).
+[experiments.bench_core]
+time = "02:59:00"
+mem_per_cpu = "4G"
+gpus = 0

@@ -1,0 +1,9 @@
+.DS_Store
+.venv
+.venvs/
+__pycache__/
+gsp_paper/
+**/results/
+**/plots/
+wheels/
+.cluster/

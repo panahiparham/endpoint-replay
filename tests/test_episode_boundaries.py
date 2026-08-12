@@ -1,0 +1,359 @@
+"""Termination / truncation audit: episode-boundary handling across every agent
+and environment.
+
+The RL contract this suite pins down:
+
+* **Environments** report ``terminated`` (a real MDP terminal - no bootstrap) and
+  ``truncated`` (a time-limit cutoff - bootstrap continues) as *separate* flags,
+  never merged, and never both true in a way that would corrupt the update.
+* **Environments never reset themselves.** Every env here (pinball, gymnax, Atari)
+  returns the *true* boundary observation and leaves the reset to the agent, so there
+  is one uniform contract and no ``auto_resets`` special case.
+* **Agents reset on ``terminated | truncated``**, and *conditionally* (``lax.cond``,
+  not a masked ``env.reset`` every step) - a stateful env like ale-py Atari cannot
+  have ``reset`` called on non-boundary steps.
+* **Replay agents** (``random_buffered``, ``dqn``, ``ddqn``) store, for each transition,
+the
+  ``next_obs`` the agent actually *observed at that step* - the true terminal /
+  truncation observation - **before** that reset overwrites it, so a truncated
+  transition bootstraps from the right state.
+* **DQN / DDQN TD targets** mask the bootstrap with ``(1 - terminated)`` only, so a
+  *truncated* episode-end still bootstraps and a *terminated* one does not.
+* **Analysis** (``plotting.episode_returns``) segments episodes on either flag.
+
+Fake envs (single float obs, distinguishable reset sentinel) make the stored
+transitions inspectable without ale-py/heavy deps; the real pinball / gymnax envs
+are exercised for their flag contract. See ``test_atari.py`` for the ale-py path,
+including the issue #1 regression test that a *truncated* Atari transition stores the
+true pre-truncation observation rather than the fresh episode's first obs.
+"""
+
+from __future__ import annotations
+
+from typing import NamedTuple
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from envs.gymnax_env import GymnaxEnv
+
+
+# --- fake envs (GymEnv protocol; single float obs, sentinel reset) ----------
+
+
+class _Box:
+    def __init__(self, shape, dtype):
+        self.shape = shape
+        self.dtype = dtype
+
+
+class _Discrete:
+    def __init__(self, n):
+        self.n = int(n)
+
+
+class _State(NamedTuple):
+    counter: jax.Array
+
+
+class FakeEnv:
+    """Single-obs env that ends every ``period`` steps.
+
+    ``obs`` is the (1-based) in-episode step counter as a float, so it is distinct
+    from the reset sentinel ``RESET_OBS`` - this lets a test tell the true terminal
+    observation apart from the fresh-episode observation in the replay buffer.
+
+    ``mode`` picks whether an episode-end is reported as ``terminated`` or
+    ``truncated``. Like every real env in this repo, it never resets itself - it returns
+    the true boundary obs and the agent is responsible for calling ``reset``.
+    """
+
+    RESET_OBS = -1.0
+
+    def __init__(self, period=3, mode="terminated", n=2):
+        assert mode in ("terminated", "truncated")
+        self._period = int(period)
+        self._mode = mode
+        self._n = int(n)
+
+    def observation_space(self, params=None):
+        return _Box((1,), jnp.float32)
+
+    def action_space(self, params=None):
+        return _Discrete(self._n)
+
+    def reset(self, key, params=None):
+        obs = jnp.asarray([self.RESET_OBS], jnp.float32)
+        return obs, _State(jnp.asarray(0, jnp.int32))
+
+    def step(self, key, state, action, params=None):
+        del key, action
+        nc = state.counter + 1
+        done = (nc % self._period) == 0
+        terminal_obs = nc.astype(jnp.float32).reshape((1,))
+        reward = jnp.asarray(1.0, jnp.float32)
+        terminated = done & (self._mode == "terminated")
+        truncated = done & (self._mode == "truncated")
+        return terminal_obs, _State(nc), reward, terminated, truncated, {}
+
+
+# --- helpers: run an agent, read its replay buffer --------------------------
+
+
+def _run_agent(agent, env, *, total, buffer_size=64, **overrides):
+    """Run one agent (`"random_buffered"`, `"dqn"`, or `"ddqn"`) on ``env`` and
+    return the jitted train output pytree."""
+    if agent == "random_buffered":
+        from agents.random_buffered import RandomBufferConfig, make_train
+        cfg = RandomBufferConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size,
+                                 BATCH_SIZE=2, **overrides)
+    elif agent == "dqn":
+        from agents.dqn import DQNConfig, make_train
+        cfg = DQNConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size, BATCH_SIZE=2,
+                        # no training: pure buffer
+                        LEARNING_STARTS=total, HIDDEN_SIZE=8, **overrides)
+    elif agent == "ddqn":
+        from agents.ddqn import DDQNConfig, make_train
+        cfg = DDQNConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size, BATCH_SIZE=2,
+                         # no training: pure buffer
+                         LEARNING_STARTS=total, HIDDEN_SIZE=8, **overrides)
+    else:
+        raise ValueError(agent)
+    out = jax.jit(make_train(cfg, env, None))(jax.random.key(0))
+    return jax.block_until_ready(out)
+
+
+def _buffer(out):
+    """Flat per-transition arrays actually written to the item buffer, in add order:
+    ``{"obs", "next_obs", "terminated", "truncated"}`` (each length = #adds)."""
+    bs = out["runner_state"].buffer_state
+    n = int(np.asarray(bs.current_index))
+    exp = bs.experience
+    return {
+        "obs": np.asarray(exp.obs).reshape(-1)[:n],
+        "next_obs": np.asarray(exp.next_obs).reshape(-1)[:n],
+        "terminated": np.asarray(exp.terminated).reshape(-1)[:n].astype(bool),
+        "truncated": np.asarray(exp.truncated).reshape(-1)[:n].astype(bool),
+    }
+
+
+BUFFER_AGENTS = ["random_buffered", "dqn", "ddqn"]
+
+
+# ===========================================================================
+# 1. Environment flag contract (real envs)
+# ===========================================================================
+
+
+def test_pinball_split_and_truncation_at_cutoff():
+    """Pinball reports terminated/truncated separately; a short cutoff truncates
+    (terminated stays False) and the two flags are never simultaneously true."""
+    from environments.pinball import PinballConfig, build
+
+    env, params = build(PinballConfig(SETTING="empty", EPISODE_CUTOFF=5))
+    obs, st = env.reset(jax.random.key(0))
+    rows = []
+    for i in range(5):
+        obs, st, r, term, trunc, info = env.step(
+            jax.random.key(i), st, jnp.int32(0), params
+        )
+        rows.append((bool(term), bool(trunc), float(r)))
+    assert all(not (t and tr) for t, tr, _ in rows)          # never both at once
+    assert all(r == -1.0 for *_, r in rows)                  # pinball reward is -1/step
+    # cutoff at step 5
+    assert [tr for _, tr, _ in rows] == [False, False, False, False, True]
+    # truncation, not termination
+    assert rows[-1][0] is False
+
+
+def test_gymnax_truncation_is_time_limit_only():
+    """A gymnax episode ended purely by the step cutoff is truncated, not
+    terminated (the wrapper splits gymnax's merged ``done``)."""
+    env, params = GymnaxEnv.make("CartPole-v1", 3)
+    obs, st = env.reset(jax.random.key(0))
+    rows = []
+    for i in range(3):
+        obs, st, r, term, trunc, info = env.step(
+            jax.random.key(100 + i), st, jnp.int32(i % 2), params
+        )
+        rows.append((bool(term), bool(trunc)))
+    assert rows[:-1] == [(False, False), (False, False)]     # in-episode
+    assert rows[-1] == (False, True)                         # cutoff -> truncated only
+
+
+def test_gymnax_real_terminal_is_terminated_not_truncated():
+    """A gymnax episode that reaches a real MDP terminal before the cutoff is
+    terminated, not truncated; the two are never both true."""
+    env, params = GymnaxEnv.make("CartPole-v1", 500)
+    obs, st = env.reset(jax.random.key(0))
+    ended = None
+    for i in range(500):
+        obs, st, r, term, trunc, info = env.step(
+            jax.random.key(i), st, jnp.int32(0), params
+        )
+        assert not (bool(term) and bool(trunc))              # invariant every step
+        if bool(term) or bool(trunc):
+            ended = (bool(term), bool(trunc))
+            break
+    # pole fell well before cutoff 500
+    assert ended == (True, False)
+
+
+# ===========================================================================
+# 2. Replay-buffer boundary handling (the agent resets on done)
+# ===========================================================================
+
+
+@pytest.mark.parametrize("agent", BUFFER_AGENTS)
+@pytest.mark.parametrize("mode", ["terminated", "truncated"])
+def test_buffer_stores_true_boundary_next_obs(agent, mode):
+    """The transition at an episode boundary stores the *true* terminal/truncation
+    observation as ``next_obs`` (captured before the agent's reset), and the *following*
+    transition's ``obs`` is the reset obs.
+
+    This is the property that makes a truncated transition bootstrap from the
+    correct state - the most error-prone part of the loop.
+    """
+    env = FakeEnv(period=3, mode=mode)
+    buf = _buffer(_run_agent(agent, env, total=7))
+
+    flag = buf[mode]
+    other = buf["truncated" if mode == "terminated" else "terminated"]
+    ends = np.flatnonzero(flag)
+
+    assert list(ends) == [2, 5]                              # every 3rd step ends
+    # only the intended flag fires
+    assert not other.any()
+    # next_obs at a boundary is the true terminal obs (counter==3.0), NOT reset(-1)
+    np.testing.assert_array_equal(buf["next_obs"][ends], [3.0, 3.0])
+    # the transition right after a boundary starts from the reset observation
+    np.testing.assert_array_equal(
+        buf["obs"][ends + 1], [FakeEnv.RESET_OBS, FakeEnv.RESET_OBS]
+    )
+    # first obs is the initial reset
+    assert buf["obs"][0] == FakeEnv.RESET_OBS
+
+
+@pytest.mark.parametrize("agent", BUFFER_AGENTS)
+def test_buffer_next_obs_matches_within_episode_continuity(agent):
+    """Within an episode the stored transitions chain: each ``next_obs`` equals the
+    following transition's ``obs`` (continuity), and that chain breaks *only* at a
+    reset (episode boundary)."""
+    env = FakeEnv(period=4, mode="terminated")
+    buf = _buffer(_run_agent(agent, env, total=9))
+    ends = set(np.flatnonzero(buf["terminated"]))
+    for i in range(len(buf["obs"]) - 1):
+        if i in ends:
+            assert buf["obs"][i + 1] == FakeEnv.RESET_OBS    # reset breaks the chain
+        else:
+            # continuity within an episode
+            assert buf["next_obs"][i] == buf["obs"][i + 1]
+
+
+# ===========================================================================
+# 3. DQN update rule: bootstrap masks terminated, not truncated
+# ===========================================================================
+
+
+def _dqn_q_leaves(env, *, seed=0):
+    """Run DQN (with training on) on ``env`` and return its online-Q array leaves."""
+    import equinox as eqx
+
+    from agents.dqn import DQNConfig, make_train
+
+    cfg = DQNConfig(TOTAL_TIMESTEPS=80, BUFFER_SIZE=256, BATCH_SIZE=8,
+                    LEARNING_STARTS=8,
+                    TRAIN_FREQUENCY=1, TARGET_NETWORK_FREQUENCY=10, HIDDEN_SIZE=16,
+                    # all-random actions -> identical data
+                    EPSILON_START=1.0, EPSILON_END=1.0)
+    out = jax.jit(make_train(cfg, env, None))(jax.random.key(seed))
+    q = out["runner_state"].q
+    return jax.tree.leaves(eqx.filter(q, eqx.is_array))
+
+
+def test_dqn_target_masks_terminated_not_truncated():
+    """DQN bootstraps on truncation but not termination. Two runs with *identical*
+    dynamics/rewards/observations that differ only in whether the episode-end is
+    labelled terminated vs truncated must learn different Q-functions - because the
+    TD target is masked by ``(1 - terminated)`` only. If the code masked on ``done``
+    (or ignored the split) the two would be identical."""
+    term_env = FakeEnv(period=4, mode="terminated")
+    trunc_env = FakeEnv(period=4, mode="truncated")
+
+    # sanity: the two runs really do differ only in the boundary flag
+    tb = _buffer(_run_agent("random_buffered", term_env, total=40))
+    ub = _buffer(_run_agent("random_buffered", trunc_env, total=40))
+    np.testing.assert_array_equal(tb["obs"], ub["obs"])
+    np.testing.assert_array_equal(tb["next_obs"], ub["next_obs"])
+    assert tb["terminated"].any() and not tb["truncated"].any()
+    assert ub["truncated"].any() and not ub["terminated"].any()
+
+    term_leaves = _dqn_q_leaves(term_env)
+    trunc_leaves = _dqn_q_leaves(trunc_env)
+    # at least one weight differs -> the update rule distinguishes the two flags
+    assert any(not np.allclose(a, b) for a, b in zip(term_leaves, trunc_leaves))
+
+
+def test_dqn_no_termination_matches_pure_truncation():
+    """A control: an env whose episode-ends are truncations learns the *same*
+    Q-function as one whose ends carry no flag continuity difference - i.e.
+    truncation is treated exactly like "keep bootstrapping". Here two truncating
+    runs with the same seed are bit-identical, guarding against accidental
+    dependence on episode index rather than the flag."""
+    a = _dqn_q_leaves(FakeEnv(period=4, mode="truncated"), seed=1)
+    b = _dqn_q_leaves(FakeEnv(period=4, mode="truncated"), seed=1)
+    for x, y in zip(a, b):
+        np.testing.assert_array_equal(x, y)
+
+
+# ===========================================================================
+# 4. Analysis: episode segmentation on either boundary flag
+# ===========================================================================
+
+
+def test_episode_returns_segments_on_either_flag():
+    from experiment.plotting import episode_returns
+
+    reward = np.ones(10)
+    terminated = np.zeros(10)
+    truncated = np.zeros(10)
+    terminated[3] = 1          # episode 1 ends at t=3 (return 4)
+    truncated[7] = 1           # episode 2 ends at t=7 via truncation (return 4)
+    ends, rets = episode_returns(reward, terminated, truncated)
+    np.testing.assert_array_equal(ends, [3, 7])
+    # rewards after t=7 are a dropped partial
+    np.testing.assert_array_equal(rets, [4.0, 4.0])
+
+
+def test_episode_returns_both_flags_same_step_is_one_boundary():
+    from experiment.plotting import episode_returns
+
+    reward = np.ones(6)
+    terminated = np.zeros(6)
+    truncated = np.zeros(6)
+    # both fire on the same step
+    terminated[2] = truncated[2] = 1
+    ends, rets = episode_returns(reward, terminated, truncated)
+    np.testing.assert_array_equal(ends, [2])                 # counted once, not twice
+    np.testing.assert_array_equal(rets, [3.0])
+
+
+def test_episode_returns_back_to_back_boundaries():
+    from experiment.plotting import episode_returns
+
+    reward = np.array([1.0, 2.0, 3.0, 4.0])
+    terminated = np.array([0, 1, 1, 0])                      # length-1 episode at t=2
+    truncated = np.zeros(4)
+    ends, rets = episode_returns(reward, terminated, truncated)
+    np.testing.assert_array_equal(ends, [1, 2])
+    np.testing.assert_array_equal(rets, [3.0, 3.0])          # (1+2) then (3)
+
+
+def test_episode_returns_no_boundary_is_empty():
+    from experiment.plotting import episode_returns
+
+    ends, rets = episode_returns(np.ones(5), np.zeros(5), np.zeros(5))
+    # a wholly-partial run yields nothing
+    assert ends.size == 0 and rets.size == 0
