@@ -15,15 +15,6 @@ from __future__ import annotations
 from typing import Callable, NamedTuple
 
 from environments.atari import AtariConfig, build as build_atari
-from environments.catch import CatchConfig, build as build_catch
-from environments.classic_control import (
-    AcrobotConfig,
-    CartpoleConfig,
-    MountainCarConfig,
-    build_acrobot,
-    build_cartpole,
-    build_mountaincar,
-)
 from environments.pinball import PinballConfig, build as build_pinball
 
 
@@ -35,10 +26,6 @@ class EnvSpec(NamedTuple):
 
 ENVIRONMENTS: dict[str, EnvSpec] = {
     "pinball": EnvSpec(PinballConfig, build_pinball),
-    "mountaincar": EnvSpec(MountainCarConfig, build_mountaincar),  # gymnax
-    "cartpole": EnvSpec(CartpoleConfig, build_cartpole),           # gymnax
-    "acrobot": EnvSpec(AcrobotConfig, build_acrobot),              # gymnax
-    "catch": EnvSpec(CatchConfig, build_catch),
     "atari": EnvSpec(AtariConfig, build_atari, vmappable=False),   # stateful ale-py FFI
 }
 
@@ -67,9 +54,5 @@ __all__ = [
     "ENVIRONMENTS",
     "get_config",
     "PinballConfig",
-    "MountainCarConfig",
-    "CartpoleConfig",
-    "AcrobotConfig",
-    "CatchConfig",
     "AtariConfig",
 ]

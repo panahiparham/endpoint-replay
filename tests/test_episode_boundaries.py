@@ -6,7 +6,7 @@ The RL contract this suite pins down:
 * **Environments** report ``terminated`` (a real MDP terminal - no bootstrap) and
   ``truncated`` (a time-limit cutoff - bootstrap continues) as *separate* flags,
   never merged, and never both true in a way that would corrupt the update.
-* **Environments never reset themselves.** Every env here (pinball, gymnax, Atari)
+* **Environments never reset themselves.** Every env here (pinball, Atari)
   returns the *true* boundary observation and leaves the reset to the agent, so there
   is one uniform contract and no ``auto_resets`` special case.
 * **Agents reset on ``terminated | truncated``**, and *conditionally* (``lax.cond``,
@@ -21,8 +21,8 @@ The RL contract this suite pins down:
 * **Analysis** (``plotting.episode_returns``) segments episodes on either flag.
 
 Fake envs (single float obs, distinguishable reset sentinel) make the stored
-transitions inspectable without ale-py/heavy deps; the real pinball / gymnax envs
-are exercised for their flag contract. See ``test_atari.py`` for the ale-py path,
+transitions inspectable without ale-py/heavy deps; the real pinball env is
+exercised for its flag contract. See ``test_atari.py`` for the ale-py path,
 including the issue #1 regression test that a *truncated* Atari transition stores the
 true pre-truncation observation rather than the fresh episode's first obs.
 """
@@ -36,7 +36,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from envs.gymnax_env import GymnaxEnv
 
 
 # --- fake envs (GymEnv protocol; single float obs, sentinel reset) ----------
@@ -150,39 +149,6 @@ def test_pinball_split_and_truncation_at_cutoff():
     assert [tr for _, tr, _ in rows] == [False, False, False, False, True]
     # truncation, not termination
     assert rows[-1][0] is False
-
-
-def test_gymnax_truncation_is_time_limit_only():
-    """A gymnax episode ended purely by the step cutoff is truncated, not
-    terminated (the wrapper splits gymnax's merged ``done``)."""
-    env, params = GymnaxEnv.make("CartPole-v1", 3)
-    obs, st = env.reset(jax.random.key(0))
-    rows = []
-    for i in range(3):
-        obs, st, r, term, trunc, info = env.step(
-            jax.random.key(100 + i), st, jnp.int32(i % 2), params
-        )
-        rows.append((bool(term), bool(trunc)))
-    assert rows[:-1] == [(False, False), (False, False)]     # in-episode
-    assert rows[-1] == (False, True)                         # cutoff -> truncated only
-
-
-def test_gymnax_real_terminal_is_terminated_not_truncated():
-    """A gymnax episode that reaches a real MDP terminal before the cutoff is
-    terminated, not truncated; the two are never both true."""
-    env, params = GymnaxEnv.make("CartPole-v1", 500)
-    obs, st = env.reset(jax.random.key(0))
-    ended = None
-    for i in range(500):
-        obs, st, r, term, trunc, info = env.step(
-            jax.random.key(i), st, jnp.int32(0), params
-        )
-        assert not (bool(term) and bool(trunc))              # invariant every step
-        if bool(term) or bool(trunc):
-            ended = (bool(term), bool(trunc))
-            break
-    # pole fell well before cutoff 500
-    assert ended == (True, False)
 
 
 # ===========================================================================

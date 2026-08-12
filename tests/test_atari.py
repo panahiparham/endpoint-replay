@@ -122,7 +122,7 @@ def test_wrapper_owns_episode_cutoff():
     returned observation is the true pre-truncation one.
 
     The counter keeps climbing (so ``truncated`` stays set) until the *agent* resets -
-    same contract as gymnax/pinball, whose ``time``-based truncation behaves identically
+    same contract as pinball, whose ``time``-based truncation behaves identically
     if an agent ignores ``done``."""
     # fake never ends on its own
     env = AtariEnvLike(_FakeVectorEnv(period=1000), episode_cutoff=4)
@@ -280,23 +280,23 @@ def test_atari_component_accepts_vmappable_false():
 
 
 def test_atari_reached_only_through_a_sweep_is_rejected():
-    from environments.classic_control import AcrobotConfig
+    from environments.pinball import PinballConfig
     from experiment import Component
     from main import ExperimentConfig
 
-    base = ExperimentConfig(AGENT="ddqn", ENV="acrobot", ENV_HYPERS=AcrobotConfig())
+    base = ExperimentConfig(AGENT="ddqn", ENV="pinball", ENV_HYPERS=PinballConfig())
     with pytest.raises(ValueError, match="'atari'"):
         Component(name="mixed", base=base,
-                  sweep={"ENV": ["acrobot", "atari"]}, seeds=[0])
+                  sweep={"ENV": ["pinball", "atari"]}, seeds=[0])
 
 
 def test_vmappable_component_on_a_pure_env_is_allowed():
-    from environments.classic_control import AcrobotConfig
+    from environments.pinball import PinballConfig
     from experiment import Component
     from main import ExperimentConfig
 
-    base = ExperimentConfig(AGENT="ddqn", ENV="acrobot", ENV_HYPERS=AcrobotConfig())
-    assert Component(name="ddqn_acrobot", base=base, seeds=[0, 1]).vmappable is True
+    base = ExperimentConfig(AGENT="ddqn", ENV="pinball", ENV_HYPERS=PinballConfig())
+    assert Component(name="ddqn_pinball", base=base, seeds=[0, 1]).vmappable is True
 
 
 # --- real ale-py XLA tests (skip if not installed) --------------------------

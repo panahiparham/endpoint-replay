@@ -5,10 +5,8 @@ description = "An online implementation of the Goal-Space Planning Algorithm in 
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "catch-jax",
     "equinox>=0.13.8",
     "flashbax>=0.1.3",
-    "gymnax>=0.0.9",
     "ipykernel>=7.3.0",
     "jax>=0.11.0",
     "optax>=0.2.8",
@@ -45,4 +43,3 @@ packages = ["src/envs", "src/agents", "src/experiment", "src/environments"]
 
 [tool.uv.sources]
 pinball-jax = { git = "https://github.com/panahiparham/pinball-jax" }
-catch-jax = { git = "https://github.com/panahiparham/catch-jax" }

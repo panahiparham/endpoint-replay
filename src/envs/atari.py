@@ -13,7 +13,7 @@ Two adaptations matter:
   a terminal step it returns the terminal obs, then resets on the *next* step (a "dead"
   step whose action is ignored). This wrapper does **not** absorb that reset. It returns
   the true boundary observation and leaves the reset to the agent, exactly like pinball
-  and gymnax, so a truncated transition's stored ``next_obs`` is the state the agent
+  as pinball, so a truncated transition's stored ``next_obs`` is the state the agent
   actually reached (issue #1). :meth:`reset` clears any pending ``NEXT_STEP`` autoreset
   and works mid-episode - both verified against ale-py 0.12.0 (PR #707) - so the dead
   step never reaches the agent. Agents must therefore reset on

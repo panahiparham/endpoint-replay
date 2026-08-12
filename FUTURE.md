@@ -101,7 +101,7 @@ implements exactly this pattern (`VMAPPABLE`, `group_blocks`, `Block`, stacked
 ## 3. Should envs auto-reset instead? (evaluate; currently: no)
 
 ### Today
-No env auto-resets. Every env (pinball, gymnax, Atari) returns the **true boundary
+No env auto-resets. Every env (pinball, Atari) returns the **true boundary
 observation** and the agent resets with `jax.lax.cond` on `terminated | truncated`.
 One contract, no `auto_resets` flag, no branch in the agents. Atari was moved *to*
 this convention in `8c48321` (kevroi/online-gsp#1) - before that it reset inside
@@ -131,7 +131,7 @@ cost lands:
   (`final_observation(state)`) paired with the `auto_resets` flag.
 - **A 7th element of the `step` tuple** - cleanest typing, same memory profile, but needs
   a new adapter around third-party `pinball_jax` (returns a 6-tuple, not ours to change)
-  plus gymnax, all agents, and every fake env in the tests.
+  plus all agents and every fake env in the tests.
 
 ### When it would actually be worth doing
 Only if we go **vectorised** (`num_envs > 1`). With a batch of sub-envs ending on
@@ -152,7 +152,7 @@ ones show corruption, which is why this went unnoticed until the audit.
 
 ### Touch points
 `src/envs/gym_env.py` (the `GymEnv` protocol + any accessor), all three envs
-(`envs/atari.py`, `envs/gymnax_env.py`, `environments/pinball.py` would need a wrapper),
+(`envs/atari.py`, `environments/pinball.py` would need a wrapper),
 all three agents (`src/agents/*` reset paths), and
 `tests/test_episode_boundaries.py` + `tests/test_atari.py`, whose contract statements and
 fake envs both assert the current no-auto-reset convention.

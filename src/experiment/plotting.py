@@ -82,7 +82,7 @@ def weighted_lifetime_return(reward, terminated, truncated):
 
     Longer episodes count for more than shorter ones, unlike a plain mean over
     episodes - useful when episode length itself varies with how well the
-    agent is doing (e.g. Acrobot, MountainCar).
+    agent is doing (e.g. Pinball).
 
     Args:
         reward: Per-timestep reward for one run.
@@ -389,8 +389,8 @@ def style(ax, ylim=None, xlabel="Timestep", ylabel="Return"):
 
     Args:
         ax: The matplotlib axis to style.
-        ylim: Fixes the return range, which differs per env, e.g. Cartpole
-            ``(0, 500)``, Acrobot ``(-500, 0)``, Pinball ``(-1000, 0)``.
+        ylim: Fixes the return range, which differs per env, e.g. Pinball
+            ``(-1000, 0)``, Atari Pong ``(-21, 21)``.
         xlabel: The x-axis label, e.g. ``"Learning rate"`` for a sensitivity
             curve instead of the default learning-curve timestep axis.
         ylabel: The y-axis label, drawn horizontal and right-aligned.
