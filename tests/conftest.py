@@ -1,4 +1,4 @@
-"""Shared SLURM-sandbox fixture for the cluster/weekly-benchmark tests.
+"""Shared SLURM-sandbox fixture for the cluster tests.
 
 ``GSP_LOCAL_MODE=1`` makes :mod:`experiment.slurm` run every "remote" command in a local
 shell and drop the ``host:`` prefix from rsync and git paths, so the real flow (push to

@@ -112,16 +112,3 @@ account = "aip-amw8"
 [experiments.pinball_medium_tuning]
 time = "05:00:00"
 account = "aip-amw8"
-
-# The weekly benchmark suite (benchmarks/core): Acrobot/MountainCar/Cartpole/
-# Pinball(easy)/Catch are all small envs with tiny MLP agents - CPU-only,
-# unlike the _tuning experiments this shape was copied from. The first real
-# dispatch (2026-08-12, sha 8b26f22) finished in 2m17s at worst and peaked at
-# 885MB (dqn_catch's 100k-transition buffer, vs 10k for the rest, despite
-# half the steps) - real usage is far below either number below. time
-# mirrors atari_20m's 2h59m: margin against a slow/contended run while
-# staying under Vulcan's 3h priority-bucket cutoff (see `sinfo`).
-[experiments.bench_core]
-time = "02:59:00"
-mem_per_cpu = "4G"
-gpus = 0
