@@ -89,7 +89,7 @@ harness. To add:
    `main` over `(seed_key, hyper_arrays)` instead of just `seed_key`.
 4. **Rewrite each agent** so those hypers are consumed as *traced arrays*, not
    Python scalars - e.g. `optax.adam(LR)` and the epsilon schedule must accept a
-   batched value. This touches the harness **and every agent** (`src/agents/*`).
+   batched value. This touches the harness **and the agent** (`src/agents/ddqn.py`).
 
 ### Reference
 The `gstar-flows` harness (`../gstar-flows/src/gstar_flows/experiment.py`)
@@ -151,9 +151,9 @@ Prefer the **env-state channel** or the **7-tuple**, never `info`. Keep DQN's
 ones show corruption, which is why this went unnoticed until the audit.
 
 ### Touch points
-`src/envs/gym_env.py` (the `GymEnv` protocol + any accessor), all three envs
+`src/envs/gym_env.py` (the `GymEnv` protocol + any accessor), both envs
 (`envs/atari.py`, `environments/pinball.py` would need a wrapper),
-all three agents (`src/agents/*` reset paths), and
+the agent (`src/agents/ddqn.py` reset path), and
 `tests/test_episode_boundaries.py` + `tests/test_atari.py`, whose contract statements and
 fake envs both assert the current no-auto-reset convention.
 
@@ -162,12 +162,12 @@ fake envs both assert the current no-auto-reset convention.
 ## 4. Memory-efficient Atari replay buffer (restore `BUFFER_SIZE=1M`)
 
 ### Today
-`agents/dqn.py`'s Flashbax item buffer stores each `TimeStep`'s `obs` **and**
+`agents/ddqn.py`'s Flashbax item buffer stores each `TimeStep`'s `obs` **and**
 `next_obs` as full `(84,84,4)` uint8 arrays, and nothing in the codebase places
 the buffer off the default (GPU, when CUDA is present) device. At the json's
 faithful `BUFFER_SIZE=1_000_000` that is ~56 GB (28 GB obs + 28 GB next_obs),
 which does not fit on a Vulcan L40S (48 GB). `experiments/atari_50m`'s
-`dqn_pong` currently runs at `BUFFER_SIZE=100_000` (~5.3 GB) instead.
+`ddqn_pong` currently runs at `BUFFER_SIZE=100_000` (~5.3 GB) instead.
 
 ### Proposed fix
 Store each frame once and reconstruct `obs`/`next_obs` by indexing a shared
@@ -178,7 +178,7 @@ memory is still the constraint after that, but adds per-step transfer cost
 and device-placement complexity inside the `jax.lax.scan` training loop.
 
 ### Touch points
-`agents/dqn.py` (buffer construction, `add`/`sample`), and
+`agents/ddqn.py` (buffer construction, `add`/`sample`), and
 `experiments/atari_50m/config.py` (`BUFFER_SIZE` back to `1_000_000` once it
 fits).
 
@@ -187,7 +187,7 @@ fits).
 ## 5. Pack multiple processes per GPU (better utilization)
 
 ### Today
-`dqn_pong` (`BUFFER_SIZE=100k`, `nature_cnn`, batch 32) was measured on a Vulcan
+`ddqn_pong` (`BUFFER_SIZE=100k`, `nature_cnn`, batch 32) was measured on a Vulcan
 L40S over a full 5M-step run (job 453105, 154 `nvidia-smi` samples at 15s
 intervals - see PR #7):
 
@@ -202,13 +202,13 @@ The 75%-memory figure is not actual demand - it is JAX's default
 `XLA_PYTHON_CLIENT_PREALLOCATE=true` grabbing a fixed 75% of the device up front
 regardless of what the process goes on to use. The real working set (the 100k-item
 replay buffer at ~5.3GB, plus the small `nature_cnn` and its optimizer state, well
-under 1GB) is a small fraction of that. One `dqn_pong` process therefore reserves
+under 1GB) is a small fraction of that. One `ddqn_pong` process therefore reserves
 most of the card's memory and roughly a quarter of its compute for its full ~68
 minute run, and the harness's current per-Atari-component model (`shard_size=1`,
 one SLURM task = one exclusive GPU) leaves the rest of the GPU idle throughout.
 
 ### Proposed fix
-Run several `dqn_pong`-scale processes concurrently on one physical GPU inside a
+Run several `ddqn_pong`-scale processes concurrently on one physical GPU inside a
 single SLURM allocation:
 
 1. Cap each process's JAX memory footprint explicitly - either
