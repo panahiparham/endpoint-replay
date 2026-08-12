@@ -75,18 +75,13 @@ changes - applied locally instead of on the cluster.
 A PR about running an experiment (a trial run, a cluster job, a sweep) must
 include a learning curve, not just numbers in the description. Generate it
 with the experiment's own plotting helpers (`experiment.plotting`), commit it
-under `benchmark_plots/` (matching the repo's existing plots there), and
-reference it in the PR body.
+under `benchmark_plots/`, and reference it in the PR body.
 
-**This repo is private**, so a plain `![...](https://raw.githubusercontent.com/...)`
-link 404s for reviewers - that domain doesn't carry the private repo's auth,
-even for someone with full repo access. Don't use it. Instead, embed it as:
+This repo is public, so either raw form renders. Embed it as:
 
 ```
 ![alt text](https://github.com/<owner>/<repo>/blob/<branch>/<path>?raw=true)
 ```
 
-The `github.com/.../blob/...?raw=true` form (not `raw.githubusercontent.com`)
-renders inline in the PR body on this private repo - confirmed working in
-PR #7. Commit the plot under `benchmark_plots/` first, then link to it on its
-branch this way.
+Commit the plot under `benchmark_plots/` first, then link to it on its branch
+this way.
