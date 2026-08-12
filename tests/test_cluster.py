@@ -33,7 +33,7 @@ from conftest import (
 def test_setup_creates_the_bare_repo_and_both_venvs(sandbox: Sandbox):
     setup_cluster(sandbox)
 
-    assert (sandbox.root / "online-gsp.git" / "HEAD").exists(), "no bare repo"
+    assert (sandbox.root / "endpoint-replay.git" / "HEAD").exists(), "no bare repo"
     for name in ("cpu", "gpu"):
         venv = sandbox.root / "envs" / name / ".venv" / "bin" / "python"
         assert venv.exists(), f"{name} venv was not built"
@@ -49,7 +49,7 @@ def test_setup_creates_the_bare_repo_and_both_venvs(sandbox: Sandbox):
         "the venvs must stay deps-only"
 
     url = _git(sandbox.repo, "remote", "get-url", "cluster-testcluster")
-    assert url == str(sandbox.root / "online-gsp.git")
+    assert url == str(sandbox.root / "endpoint-replay.git")
     # The scratch snapshot used to build the venvs is cleaned up.
     assert not (sandbox.root / "runs" / ".setup").exists()
 

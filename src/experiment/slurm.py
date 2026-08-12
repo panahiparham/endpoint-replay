@@ -21,7 +21,7 @@ lets :func:`sync` pull an experiment down with a single rsync, and it lets the h
 
 Layout under the configured root::
 
-    online-gsp.git/                 bare repo (the push target)
+    endpoint-replay.git/            bare repo (the push target)
     envs/{cpu,gpu}/.venv            + lock.sha256
     results/<label>/                shared across every commit
     runs/<runid>/                   snapshot, MANIFEST, logs/

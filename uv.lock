@@ -281,6 +281,60 @@ wheels = [
 ]
 
 [[package]]
+name = "endpoint-replay"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "equinox" },
+    { name = "flashbax" },
+    { name = "ipykernel" },
+    { name = "jax" },
+    { name = "optax" },
+    { name = "pinball-jax" },
+    { name = "polars" },
+    { name = "tyro" },
+]
+
+[package.optional-dependencies]
+atari = [
+    { name = "ale-py", extra = ["xla"] },
+]
+cuda = [
+    { name = "jax", extra = ["cuda12"] },
+]
+
+[package.dev-dependencies]
+analysis = [
+    { name = "ipykernel" },
+    { name = "matplotlib" },
+]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ale-py", extras = ["xla"], marker = "extra == 'atari'", specifier = ">=0.12.0" },
+    { name = "equinox", specifier = ">=0.13.8" },
+    { name = "flashbax", specifier = ">=0.1.3" },
+    { name = "ipykernel", specifier = ">=7.3.0" },
+    { name = "jax", specifier = ">=0.11.0" },
+    { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda'", specifier = "==0.11.0" },
+    { name = "optax", specifier = ">=0.2.8" },
+    { name = "pinball-jax", git = "https://github.com/panahiparham/pinball-jax" },
+    { name = "polars", specifier = ">=1.0" },
+    { name = "tyro", specifier = ">=0.9" },
+]
+provides-extras = ["atari", "cuda"]
+
+[package.metadata.requires-dev]
+analysis = [
+    { name = "ipykernel", specifier = ">=6" },
+    { name = "matplotlib", specifier = ">=3.8" },
+]
+dev = [{ name = "pytest", specifier = ">=8" }]
+
+[[package]]
 name = "equinox"
 version = "0.13.8"
 source = { registry = "https://pypi.org/simple" }
@@ -1056,60 +1110,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/88/a1/9ca9cc3338217311cee21f7ba795dad4f38b7a279a6da7d3d549258f60b1/nvidia_nvshmem_cu12-3.7.2-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:98495de30994f1401a12cc8158ffacbeada44579f54185d75665381468056faa", size = 229963056, upload-time = "2026-07-17T19:23:44.067Z" },
     { url = "https://files.pythonhosted.org/packages/63/03/cde130e3ff706784f9efd47204f299b15113ea08203e98a556603dac245d/nvidia_nvshmem_cu12-3.7.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:02b6d3482d90ea8ba214bc400362297f573257763990a98c9846ec5c786a7227", size = 230171132, upload-time = "2026-07-17T19:25:07.092Z" },
 ]
-
-[[package]]
-name = "online-gsp"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "equinox" },
-    { name = "flashbax" },
-    { name = "ipykernel" },
-    { name = "jax" },
-    { name = "optax" },
-    { name = "pinball-jax" },
-    { name = "polars" },
-    { name = "tyro" },
-]
-
-[package.optional-dependencies]
-atari = [
-    { name = "ale-py", extra = ["xla"] },
-]
-cuda = [
-    { name = "jax", extra = ["cuda12"] },
-]
-
-[package.dev-dependencies]
-analysis = [
-    { name = "ipykernel" },
-    { name = "matplotlib" },
-]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ale-py", extras = ["xla"], marker = "extra == 'atari'", specifier = ">=0.12.0" },
-    { name = "equinox", specifier = ">=0.13.8" },
-    { name = "flashbax", specifier = ">=0.1.3" },
-    { name = "ipykernel", specifier = ">=7.3.0" },
-    { name = "jax", specifier = ">=0.11.0" },
-    { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda'", specifier = "==0.11.0" },
-    { name = "optax", specifier = ">=0.2.8" },
-    { name = "pinball-jax", git = "https://github.com/panahiparham/pinball-jax" },
-    { name = "polars", specifier = ">=1.0" },
-    { name = "tyro", specifier = ">=0.9" },
-]
-provides-extras = ["atari", "cuda"]
-
-[package.metadata.requires-dev]
-analysis = [
-    { name = "ipykernel", specifier = ">=6" },
-    { name = "matplotlib", specifier = ">=3.8" },
-]
-dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "opencv-python"

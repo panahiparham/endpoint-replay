@@ -1,4 +1,4 @@
-# online-gsp agent instructions
+# endpoint-replay agent instructions
 
 ## Work in a dedicated worktree, by default
 
@@ -11,8 +11,8 @@ does (e.g. `pinball-variant`, `rainbow-agent`) and prefix it by convention
 (`feat/`, `experiment/`, `fix/`):
 
 ```bash
-git worktree add ../online-gsp-<short-name> -b <branch> main   # new branch
-git worktree add ../online-gsp-<short-name> <branch>           # resuming one
+git worktree add ../endpoint-replay-<short-name> -b <branch> main   # new branch
+git worktree add ../endpoint-replay-<short-name> <branch>           # resuming one
 ```
 
 Share one venv across worktrees instead of running `uv sync` in each:
@@ -21,7 +21,7 @@ Share one venv across worktrees instead of running `uv sync` in each:
 MAIN_WORKTREE=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
 SHARED_VENV="$MAIN_WORKTREE/.venvs/shared"   # gitignored
 [ -x "$SHARED_VENV/bin/python" ] || UV_PROJECT_ENVIRONMENT="$SHARED_VENV" uv sync
-[ -e "../online-gsp-<short-name>/.venv" ] || ln -s "$SHARED_VENV" ../online-gsp-<short-name>/.venv
+[ -e "../endpoint-replay-<short-name>/.venv" ] || ln -s "$SHARED_VENV" ../endpoint-replay-<short-name>/.venv
 ```
 
 The `[ -x ... ] || uv sync` check is a fast-path skip, not a lock: if two
@@ -32,7 +32,7 @@ uv's own locking is what makes that safe, not this check.
 If a worktree's task needs a new dependency, give it its own private venv
 instead of syncing into `$SHARED_VENV` - a `uv add`/`uv sync` there would
 rewrite the shared environment underneath every other worktree mid-run.
-Separately, `online-gsp` itself is installed editable into the shared venv,
+Separately, `endpoint-replay` itself is installed editable into the shared venv,
 so `uv run` in a different worktree re-points that one entry at whichever
 worktree ran it last - harmless (imports still resolve) but not
 deterministic across worktrees.
@@ -59,10 +59,10 @@ its branch. If abandoning, force both - the untracked `.venv` symlink
 otherwise blocks a plain removal:
 
 ```bash
-git worktree remove ../online-gsp-<short-name>            # merged
+git worktree remove ../endpoint-replay-<short-name>            # merged
 git branch -d <branch>
 
-git worktree remove --force ../online-gsp-<short-name>    # abandoned
+git worktree remove --force ../endpoint-replay-<short-name>    # abandoned
 git branch -D <branch>
 ```
 

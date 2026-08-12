@@ -11,7 +11,7 @@ host = "vulcan"
 # Everything the cluster knows about this project lives under here - the bare repo,
 # the two venvs, results and run snapshots. Deleting it is a full reset. The literal
 # $HOME is expanded by the *remote* shell, not this machine's.
-root = "$HOME/scratch/online-gsp"
+root = "$HOME/scratch/endpoint-replay"
 
 # The account jobs are charged to. Left empty, setup_cluster.py detects the candidates
 # from ~/projects on the cluster and tells you what to put here.

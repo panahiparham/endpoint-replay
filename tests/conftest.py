@@ -72,7 +72,7 @@ if __name__ == "__main__":
 CLUSTER_TOML = """\
 [cluster]
 host = "testcluster"
-root = "$HOME/scratch/online-gsp"
+root = "$HOME/scratch/endpoint-replay"
 account = "def-test"
 
 [venvs]
@@ -132,7 +132,7 @@ class Sandbox:
 
     @property
     def root(self) -> Path:
-        return self.home / "scratch" / "online-gsp"
+        return self.home / "scratch" / "endpoint-replay"
 
     @property
     def run_dirs(self) -> list[Path]:

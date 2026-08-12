@@ -11,7 +11,7 @@ SHA="${3:?SHA required}"
 LABEL="${4:?LABEL required}"
 EXP_RELDIR="${5:?exp_reldir required}"
 
-BARE="$ROOT/online-gsp.git"
+BARE="$ROOT/endpoint-replay.git"
 RUNDIR="$ROOT/runs/$RUNID"
 
 # Hard-fail if bare repo is missing

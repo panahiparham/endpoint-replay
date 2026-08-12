@@ -11,7 +11,7 @@ ROOT="${1:?ROOT (cluster root dir) required}"
 mkdir -p "$ROOT/runs" "$ROOT/envs" "$ROOT/results" >&2
 
 # Initialize bare repo if absent
-BARE="$ROOT/online-gsp.git"
+BARE="$ROOT/endpoint-replay.git"
 if [[ ! -d "$BARE" ]]; then
   git init --quiet --bare "$BARE" >&2
 fi
