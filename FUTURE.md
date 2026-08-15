@@ -151,8 +151,8 @@ Prefer the **env-state channel** or the **7-tuple**, never `info`. Keep DQN's
 ones show corruption, which is why this went unnoticed until the audit.
 
 ### Touch points
-`src/envs/gym_env.py` (the `GymEnv` protocol + any accessor), both envs
-(`envs/atari.py`, `environments/pinball.py` would need a wrapper),
+`src/environments/gym_env.py` (the `GymEnv` protocol + any accessor), both envs
+(`environments/atari.py`, `environments/pinball.py` would need a wrapper),
 the agent (`src/agents/ddqn.py` reset path), and
 `tests/test_episode_boundaries.py` + `tests/test_atari.py`, whose contract statements and
 fake envs both assert the current no-auto-reset convention.

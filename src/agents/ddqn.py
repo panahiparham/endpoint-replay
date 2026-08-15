@@ -30,7 +30,7 @@ from agents.nets import (
     TimeStep,
     polyak_update,
 )
-from envs.gym_env import DiscreteActionSpace, GymEnv
+from environments.gym_env import DiscreteActionSpace, GymEnv
 
 
 @dataclass(frozen=True, kw_only=True)
