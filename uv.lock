@@ -289,6 +289,7 @@ dependencies = [
     { name = "flashbax" },
     { name = "ipykernel" },
     { name = "jax" },
+    { name = "matplotlib" },
     { name = "optax" },
     { name = "pinball-jax" },
     { name = "polars" },
@@ -304,10 +305,6 @@ cuda = [
 ]
 
 [package.dev-dependencies]
-analysis = [
-    { name = "ipykernel" },
-    { name = "matplotlib" },
-]
 dev = [
     { name = "pytest" },
 ]
@@ -320,6 +317,7 @@ requires-dist = [
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "jax", specifier = ">=0.11.0" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda'", specifier = "==0.11.0" },
+    { name = "matplotlib", specifier = ">=3.8" },
     { name = "optax", specifier = ">=0.2.8" },
     { name = "pinball-jax", git = "https://github.com/panahiparham/pinball-jax" },
     { name = "polars", specifier = ">=1.0" },
@@ -328,10 +326,6 @@ requires-dist = [
 provides-extras = ["atari", "cuda"]
 
 [package.metadata.requires-dev]
-analysis = [
-    { name = "ipykernel", specifier = ">=6" },
-    { name = "matplotlib", specifier = ">=3.8" },
-]
 dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
