@@ -26,7 +26,7 @@ import pytest
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO))  # for `import main` / repo-root modules
 
-from envs.atari import AtariEnvLike
+from environments.atari import AtariEnvLike
 
 
 class _FakeVectorEnv:
