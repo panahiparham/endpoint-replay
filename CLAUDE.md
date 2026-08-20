@@ -47,8 +47,11 @@ git push -u origin <branch>
 Then open the PR (`gh pr create` or the GitHub MCP tool). Keep the worktree
 and branch around until the PR merges or is closed - don't clean up early.
 
-Push straight to `main` instead only when told to directly (e.g. "push this
-to main," "commit to main," "no PR needed"), and clean up right away:
+Push straight to `main` instead when told to directly (e.g. "push this
+to main," "commit to main," "no PR needed"), or when the task adds, runs, or
+analyses an experiment (a new experiment folder, a hyperparameter/config
+change, a cluster run, an analysis-notebook update). Reserve PRs for new
+features and bug fixes. Either way, clean up right away:
 
 ```bash
 git checkout main && git merge --ff-only <branch>   # or: git push origin <branch>:main
@@ -70,18 +73,19 @@ This mirrors the shared-venv pattern `cluster.toml` already uses for SLURM
 jobs - one venv reused by every commit, re-synced only when the lockfile
 changes - applied locally instead of on the cluster.
 
-## Learning curves in experiment-run PRs
+## Learning curves in experiment work
 
-A PR about running an experiment (a trial run, a cluster job, a sweep) must
-include a learning curve, not just numbers in the description. Generate it
-with the experiment's own plotting helpers (`experiment.plotting`), commit it
-under `benchmark_plots/`, and reference it in the PR body.
+Experiment work (a trial run, a cluster job, a sweep, an analysis-notebook
+update) needs a learning curve, not just numbers in a commit message.
+Generate it with the experiment's own plotting helpers
+(`experiment.plotting`), and commit it under `benchmark_plots/`.
 
-This repo is public, so either raw form renders. Embed it as:
+This repo is public, so either raw form renders. Reference the plot as:
 
 ```
 ![alt text](https://github.com/<owner>/<repo>/blob/<branch>/<path>?raw=true)
 ```
 
-Commit the plot under `benchmark_plots/` first, then link to it on its branch
-this way.
+Commit the plot under `benchmark_plots/` first, then link to it this way - in
+the commit message when pushing straight to `main`, or in the PR body when
+the same change also touches a feature or bug fix.
