@@ -5,4 +5,4 @@ Implementation of Endpoint Replay, a method for compressing the replay buffer in
 Endpoint Replay: Compressing the Recency Buffer in Deep Reinforcement Learning. Parham Mohammad Panahi, Armin Ashrafi, Haoyu Du, Andrew Patterson, Martha White, Adam White. Reinforcement Learning Journal (RLJ), 2026.
 
 # Usage
-This repository is under construction and will be available after the Reinforcement Learning Conference 2026.
+This repository is under construction and will be available soon!
