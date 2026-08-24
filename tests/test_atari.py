@@ -5,10 +5,10 @@ Logic tests drive ``AtariEnvLike`` against a fake vector env reproducing ale-py'
 ``atarinet`` DDQN on a fake image env - all without ale-py, so they run anywhere.
 The real ale-py tests self-skip when the XLA build is not installed.
 
-Note: on macOS-CPU, ale-py's XLA FFI can intermittently *segfault* when the
-episode-boundary reset consume runs under the DDQN graph (it is solid on
-Linux-CUDA, where Atari training actually happens). The real DDQN smoke therefore
-runs in a subprocess and skips on such a crash rather than taking down pytest.
+Note: on macOS-CPU, ale-py's XLA FFI can intermittently *segfault* under a heavy
+graph like DDQN (it is solid on Linux-CUDA, where Atari training actually
+happens). The real DDQN smoke therefore runs in a subprocess and skips on such
+a crash rather than taking down pytest.
 """
 
 from __future__ import annotations
@@ -32,21 +32,26 @@ from environments.atari import AtariEnvLike
 class _FakeVectorEnv:
     """Mimics ``ale_py.AtariVectorEnv`` + ``.xla()`` (jittable, no ale-py).
 
-    Terminates every ``period`` steps. Obs frames carry the step counter so a reset
-    (value 0) is distinguishable. Models ale's NEXT_STEP autoreset via a pending
-    flag in the handle: a terminal step sets it; the next ``step_fn`` returns a fresh
-    obs.
+    Ends every ``period`` steps, as ``terminated`` or ``truncated`` per
+    ``mode``. Obs frames carry the step counter so a reset (value 0) is
+    distinguishable. Models ale's NEXT_STEP autoreset via a pending flag in
+    the handle: a boundary step sets it; the next ``step_fn`` returns a fresh
+    obs, ignoring the given action.
     """
 
     def __init__(self, num_envs: int = 1, period: int = 3, frames: int = 4,
-                 h: int = 84, w: int = 84, n: int = 6) -> None:
+                 h: int = 84, w: int = 84, n: int = 6,
+                 mode: str = "terminated") -> None:
+        assert mode in ("terminated", "truncated")
         self.num_envs = num_envs
         self._period, self._frames, self._h, self._w = period, frames, h, w
+        self._mode = mode
         self.single_observation_space = type("S", (), {"shape": (frames, h, w)})()
         self.single_action_space = type("A", (), {"n": n})()
 
     def xla(self):
         frames, h, w, period = self._frames, self._h, self._w, self._period
+        is_terminated = self._mode == "terminated"
 
         def obs(val):
             return jnp.full((1, frames, h, w), val, jnp.uint8)
@@ -59,16 +64,18 @@ class _FakeVectorEnv:
         def step_fn(handle, actions):
             is_reset = handle[1] > 0
             count = handle[0] + jnp.uint8(1)
-            term = (count % period == 0) & ~is_reset
+            done = (count % period == 0) & ~is_reset
             new_handle = (
                 handle.at[0].set(jnp.where(is_reset, jnp.uint8(0), count))
-                .at[1].set(jnp.where(term, jnp.uint8(1), jnp.uint8(0)))
+                .at[1].set(jnp.where(done, jnp.uint8(1), jnp.uint8(0)))
             )
             obs_val = jnp.where(is_reset, jnp.uint8(0), count).astype(jnp.uint8)
+            term = done if is_terminated else jnp.zeros_like(done)
+            trunc = done if not is_terminated else jnp.zeros_like(done)
             return new_handle, (
                 obs(obs_val),
                 jnp.where(is_reset, 0.0, 1.0).reshape((1,)).astype(jnp.float32),
-                term.reshape((1,)), jnp.zeros((1,), bool), {},
+                term.reshape((1,)), trunc.reshape((1,)), {},
             )
 
         return init, reset_fn, step_fn
@@ -115,36 +122,22 @@ def test_no_in_step_reset_returns_true_boundary_obs():
     assert seen == [(1, False), (2, False), (3, True)]
 
 
-def test_wrapper_owns_episode_cutoff():
-    """Truncation comes from the wrapper's own agent-step counter, not from ale: this
-    fake
-    never ends on its own, yet ``truncated`` fires exactly at ``episode_cutoff`` and the
-    returned observation is the true pre-truncation one.
-
-    The counter keeps climbing (so ``truncated`` stays set) until the *agent* resets -
-    same contract as pinball, whose ``time``-based truncation behaves identically
-    if an agent ignores ``done``."""
-    # fake never ends on its own
-    env = AtariEnvLike(_FakeVectorEnv(period=1000), episode_cutoff=4)
+def test_dead_step_after_boundary_is_clean_and_ignores_action():
+    """The step right after a boundary is ale's own NEXT_STEP dead step: a
+    fresh obs, ``reward=0``, both flags false, regardless of the action."""
+    env = AtariEnvLike(_FakeVectorEnv(period=3))
     _, state = env.reset(jax.random.key(0))
-    assert int(state.t) == 0
-    rows = []
-    for n in range(5):
-        obs, state, _r, term, trunc, _i = env.step(
-            jax.random.key(n), state, jnp.int32(0)
-        )
-        rows.append((int(obs[0, 0, 0]), bool(term), bool(trunc), int(state.t)))
-    # fires at 4, stays set
-    assert [r[2] for r in rows] == [False, False, False, True, True]
-    # a cutoff truncates, never terminates
-    assert not any(r[1] for r in rows)
-    # only env.reset clears the counter
-    assert [r[3] for r in rows] == [1, 2, 3, 4, 5]
-    # true pre-truncation obs, not a reset
-    assert rows[3][0] == 4
+    for _ in range(2):
+        _, state, _r, _t, _tr, _i = env.step(jax.random.key(0), state, jnp.int32(0))
+    # 3rd step: the boundary
+    obs, state, _r, term, _tr, _i = env.step(jax.random.key(0), state, jnp.int32(0))
+    assert int(obs[0, 0, 0]) == 3 and bool(term) is True
 
-    _, fresh = env.reset(jax.random.key(0))                # the agent's reset clears it
-    assert int(fresh.t) == 0
+    # dead step: a different action (5, not 0) proves it's ignored
+    obs, state, r, term, trunc, _i = env.step(jax.random.key(0), state, jnp.int32(5))
+    assert int(obs[0, 0, 0]) == 0  # fresh episode's first obs
+    assert float(r) == 0.0
+    assert bool(term) is False and bool(trunc) is False
 
 
 def test_num_envs_gt_one_rejected():
@@ -161,13 +154,12 @@ def test_truncated_transition_stores_true_obs():
     so a
     reset observation here would corrupt it.
 
-    Runs the real agent loop over the real wrapper (with a fake FFI), so it covers the
-    whole
-    chain: wrapper-owned cutoff -> no in-step reset -> agent's conditional reset ->
+    Runs the real agent loop over the real wrapper (with a fake FFI), so it covers
+    the whole chain: ale's own NEXT_STEP dead step -> agent's conditional reset ->
     buffer."""
     CUTOFF = 4
-    # truncations only
-    env = AtariEnvLike(_FakeVectorEnv(period=1000), episode_cutoff=CUTOFF)
+    # truncations only, at the same cadence a real EPISODE_CUTOFF would fire
+    env = AtariEnvLike(_FakeVectorEnv(period=CUTOFF, mode="truncated"))
     from agents.ddqn import DDQNConfig, make_train
     cfg = DDQNConfig(TOTAL_TIMESTEPS=9, BUFFER_SIZE=16, BATCH_SIZE=2,
                      LEARNING_STARTS=9,
@@ -315,39 +307,41 @@ ale_only = pytest.mark.skipif(
 
 
 @ale_only
-def test_atari_real_cutoff_is_exact_and_wrapper_owned():
-    """End-to-end against real ale: ``EPISODE_CUTOFF`` is exact in *agent steps*, and
-    the
-    wrapper is what enforces it - ale's own limit is deliberately set one step later, so
-    a
-    truncation never triggers ale's autoreset (the autoreset is what discarded the true
-    pre-truncation observation). If ale were still the one truncating, this would fire
-    at
-    ``CUTOFF + 1``."""
+def test_atari_real_cutoff_is_exact_and_dead_step_is_clean():
+    """End-to-end against real ale: verifies the two claims this refactor
+    relies on, rather than assuming them.
+
+    ``EPISODE_CUTOFF`` (given to ale as ``EPISODE_CUTOFF * FRAMESKIP`` raw
+    frames in :func:`build`) is exact in *agent steps* - ale owns the cutoff
+    directly now, there is no wrapper-side counting. And the step right after
+    the truncation is ale's own NEXT_STEP dead step: a fresh observation,
+    ``reward=0``, both flags false, regardless of the action passed."""
     from environments import ENVIRONMENTS
     from environments.atari import AtariConfig
 
     CUTOFF = 12
-    env, _ = ENVIRONMENTS["atari"].build(
+    env, params = ENVIRONMENTS["atari"].build(
         AtariConfig(GAME="pong", EPISODE_CUTOFF=CUTOFF)
     )
-    _, state = env.reset(jax.random.key(0))
+    boundary_obs, state = env.reset(jax.random.key(0))
     first_trunc = None
-    for n in range(1, CUTOFF + 4):
-        _obs, state, _r, term, trunc, _i = env.step(
-            jax.random.key(n), state, jnp.int32(0)
+    for n in range(1, CUTOFF + 1):
+        boundary_obs, state, _r, term, trunc, _i = env.step(
+            jax.random.key(n), state, jnp.int32(0), params
         )
-        # pong can't terminate this fast
-        assert not bool(term)
+        assert not bool(term)  # pong can't terminate this fast
         if bool(trunc):
             first_trunc = n
             break
     assert first_trunc == CUTOFF
-    # wrapper's own counter, agent resets next
-    assert int(state.t) == CUTOFF
-    # reset works mid-episode (ale behaviour X)
-    _, fresh = env.reset(jax.random.key(1))
-    assert int(fresh.t) == 0
+
+    # the dead step: a different action (5, not 0) proves it is ignored
+    dead_obs, state, r, term, trunc, _i = env.step(
+        jax.random.key(CUTOFF + 1), state, jnp.int32(5), params
+    )
+    assert float(r) == 0.0
+    assert bool(term) is False and bool(trunc) is False
+    assert not np.array_equal(np.asarray(dead_obs), np.asarray(boundary_obs))
 
 
 @ale_only
