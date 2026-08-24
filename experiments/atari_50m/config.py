@@ -65,7 +65,7 @@ COMPONENTS = [
                 EPSILON_START=1.0,               # json: EPSILON_START
                 EPSILON_END=0.01,                # json: EPSILON_END
                 EPSILON_FRACTION=0.05,           # json: EPSILON_FRACTION
-                NETWORK_PRESET="nature_cnn",     # json: NETWORK_PRESET
+                NETWORK_PRESET="atarinet",     # json: NETWORK_PRESET
                 # TAU not in the json -> default 1.0 (hard target copy).
             ),
             ENV_HYPERS=_ATARI_PONG,

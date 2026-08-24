@@ -2,7 +2,7 @@
 
 Logic tests drive ``AtariEnvLike`` against a fake vector env reproducing ale-py's
 ``.xla()`` FFI contract (opaque ``(8,)`` handle, NEXT_STEP autoreset), and run the
-``nature_cnn`` DDQN on a fake image env - all without ale-py, so they run anywhere.
+``atarinet`` DDQN on a fake image env - all without ale-py, so they run anywhere.
 The real ale-py tests self-skip when the XLA build is not installed.
 
 Note: on macOS-CPU, ale-py's XLA FFI can intermittently *segfault* when the
@@ -172,7 +172,7 @@ def test_truncated_transition_stores_true_obs():
     cfg = DDQNConfig(TOTAL_TIMESTEPS=9, BUFFER_SIZE=16, BATCH_SIZE=2,
                      LEARNING_STARTS=9,
                      # no training: pure buffer inspection
-                     NETWORK_PRESET="nature_cnn")
+                     NETWORK_PRESET="atarinet")
     out = jax.block_until_ready(jax.jit(make_train(cfg, env, None))(jax.random.key(0)))
 
     bs = out["runner_state"].buffer_state
@@ -202,7 +202,7 @@ def test_truncated_transition_stores_true_obs():
 # --- DDQN on image obs in jit (fake env; reliable, no ale-py) ----------------
 
 class _FakeImageEnv:
-    """A GymEnv with (84,84,4) uint8 obs, to exercise the ``nature_cnn`` DDQN (uint8
+    """A GymEnv with (84,84,4) uint8 obs, to exercise the ``atarinet`` DDQN (uint8
     replay,
     agent-side conditional reset) under ``jax.jit``. Like the real envs it returns the
     true
@@ -238,7 +238,7 @@ def test_ddqn_nature_cnn_jit_smoke():
         DDQNConfig(TOTAL_TIMESTEPS=120, BUFFER_SIZE=200, BATCH_SIZE=8,
                    LEARNING_STARTS=10,
                    TRAIN_FREQUENCY=2, TARGET_NETWORK_FREQUENCY=20,
-                   EPSILON_FRACTION=0.5, NETWORK_PRESET="nature_cnn"),
+                   EPSILON_FRACTION=0.5, NETWORK_PRESET="atarinet"),
         env, None,
     )
     out = jax.jit(train)(jax.random.key(0))
@@ -371,7 +371,7 @@ def test_atari_real_truncated_transition_is_not_the_reset_obs():
     )
     # LEARNING_STARTS past the horizon: no training, pure buffer inspection.
     cfg = DDQNConfig(TOTAL_TIMESTEPS=45, BUFFER_SIZE=64, BATCH_SIZE=2,
-                     LEARNING_STARTS=45, NETWORK_PRESET="nature_cnn")
+                     LEARNING_STARTS=45, NETWORK_PRESET="atarinet")
     out = jax.block_until_ready(
         jax.jit(make_train(cfg, env, params))(jax.random.key(0))
     )
@@ -423,7 +423,7 @@ env, p = ENVIRONMENTS["atari"].build(
     AtariConfig(GAME="pong", FRAMESKIP=4, STICKY_ACTIONS=0.25, EPISODE_CUTOFF=30))
 train = make_train(DDQNConfig(TOTAL_TIMESTEPS=120, BUFFER_SIZE=200, BATCH_SIZE=8,
     LEARNING_STARTS=10, TRAIN_FREQUENCY=4, TARGET_NETWORK_FREQUENCY=30,
-    EPSILON_FRACTION=0.5, NETWORK_PRESET="nature_cnn"), env, p)
+    EPSILON_FRACTION=0.5, NETWORK_PRESET="atarinet"), env, p)
 out = jax.jit(train)(jax.random.key(0)); jax.block_until_ready(out)
 assert out["metrics"]["reward"].shape == (120,)
 print("SMOKE_OK")

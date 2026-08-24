@@ -32,7 +32,7 @@ Two adaptations matter:
   the random no-op start - so this buys the *ordering*, not accuracy.)
 * **Layout.** ale hands back ``(num_envs=1, frames, H, W)`` uint8; we present it
   channel-last ``(H, W, frames)`` (stacked frames become channels), which the
-  ``nature_cnn`` Q-network normalises (``/255``) and consumes.
+  ``atarinet`` Q-network normalises (``/255``) and consumes.
 
 Not vmap-able. ``jax.vmap`` traces and compiles over the FFI custom call without
 complaint, then fails inside ale at run time (``INTERNAL: Incorrect handle buffer

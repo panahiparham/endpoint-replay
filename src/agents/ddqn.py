@@ -8,7 +8,7 @@ Double DQN implemented with Equinox Q-network and Flashbax replay buffer.
 Truncated episodes still bootstrap; on ``terminated | truncated`` the agent
 resets for the next step after storing the true boundary ``next_obs``.
 
-The Q-network presets (``mlp`` / ``nature_cnn``), the buffer's transition type,
+The Q-network presets (``mlp`` / ``atarinet``), the buffer's transition type,
 and the scan carry live here alongside the agent, since this is currently the
 only value-based agent in the package. If a second one is added and needs the
 same pieces, split them back out into a shared module.
