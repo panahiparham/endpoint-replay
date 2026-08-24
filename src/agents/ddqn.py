@@ -1,7 +1,6 @@
-"""Double DQN with an Equinox Q-network and Flashbax item buffer.
+"""
+Double DQN implemented with Equinox Q-network and Flashbax replay buffer.
 
-A PureJaxRL-style scan loop whose TD target decouples action selection from
-evaluation (van Hasselt et al., 2016):
 
     a* = argmax_a Q_online(s', a)
     y  = r + γ Q_target(s', a*)   (masked by ``(1 - terminated)``)
@@ -15,11 +14,10 @@ only value-based agent in the package. If a second one is added and needs the
 same pieces, split them back out into a shared module.
 """
 
-from __future__ import annotations
-
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, NamedTuple, TypedDict
+from typing import Any, NamedTuple, TypedDict
 
 import equinox as eqx
 import flashbax as fbx
@@ -59,8 +57,8 @@ class QNetwork(eqx.Module):
         return self.layer3(x)
 
 
-def _nature_flat_dim(obs_shape: tuple[int, ...]) -> int:
-    """Flattened size after the Nature-DQN conv stack, computed host-side."""
+def _atarinet_flat_dim(obs_shape: tuple[int, ...]) -> int:
+    """Flattened size after the Nature-DQN conv stack."""
     h, w = obs_shape[0], obs_shape[1]
     for kernel, stride in ((8, 4), (4, 2), (3, 1)):
         h = (h - kernel) // stride + 1
@@ -68,8 +66,8 @@ def _nature_flat_dim(obs_shape: tuple[int, ...]) -> int:
     return 64 * h * w
 
 
-class NatureCNN(eqx.Module):
-    """Nature-DQN conv torso + 512 head for channel-last image observations."""
+class AtariNet(eqx.Module):
+    """Nature-DQN conv net + linear head for q-values."""
 
     conv1: eqx.nn.Conv2d
     conv2: eqx.nn.Conv2d
@@ -85,7 +83,7 @@ class NatureCNN(eqx.Module):
         self.conv1 = eqx.nn.Conv2d(channels, 32, kernel_size=8, stride=4, key=k1)
         self.conv2 = eqx.nn.Conv2d(32, 64, kernel_size=4, stride=2, key=k2)
         self.conv3 = eqx.nn.Conv2d(64, 64, kernel_size=3, stride=1, key=k3)
-        self.head = eqx.nn.Linear(_nature_flat_dim(obs_shape), 512, key=k4)
+        self.head = eqx.nn.Linear(_atarinet_flat_dim(obs_shape), 512, key=k4)
         self.out = eqx.nn.Linear(512, action_dim, key=k5)
 
     def __call__(self, x: jax.Array) -> jax.Array:
@@ -113,25 +111,6 @@ class AgentTrainOutput(TypedDict):
     metrics: dict[str, jax.Array]
 
 
-def polyak_update(target: QNetwork, online: QNetwork, tau: float) -> QNetwork:
-    """Blend the online network into the target network.
-
-    Args:
-        target: The target network to update.
-        online: The online network to blend in.
-        tau: Blend weight; ``1.0`` is a hard copy of ``online``.
-
-    Returns:
-        The updated target network.
-    """
-    online_arr, online_other = eqx.partition(online, eqx.is_array)
-    target_arr, _ = eqx.partition(target, eqx.is_array)
-    new_arr = jax.tree.map(
-        lambda t, o: tau * o + (1.0 - tau) * t, target_arr, online_arr
-    )
-    return eqx.combine(new_arr, online_other)
-
-
 @dataclass(frozen=True, kw_only=True)
 class DDQNConfig:
     LR: float = 3e-4
@@ -142,12 +121,11 @@ class DDQNConfig:
     TRAIN_FREQUENCY: int = 1
     TARGET_NETWORK_FREQUENCY: int = 1_000
     GAMMA: float = 0.99
-    TAU: float = 1.0
     EPSILON_START: float = 1.0
     EPSILON_END: float = 0.05
     EPSILON_FRACTION: float = 0.5
     HIDDEN_SIZE: int = 64
-    NETWORK_PRESET: str = "mlp"   # "mlp" (vector obs) or "nature_cnn" (image obs)
+    NETWORK_PRESET: str = "mlp"
     ADAM_EPS: float = 1e-8
     SEED: int = 42
 
@@ -157,30 +135,16 @@ def make_train(
     env: GymEnv[DiscreteActionSpace],
     env_params: object | None = None,
 ) -> Callable[[jax.Array], AgentTrainOutput]:
-    """Build the pure training function for a Double DQN agent.
-
-    Args:
-        config: Agent hyperparameters.
-        env: The environment to train in, with a discrete action space.
-        env_params: Environment parameters, passed through to ``env``.
-
-    Returns:
-        A callable mapping a PRNG key to the run's ``AgentTrainOutput``.
-
-    Raises:
-        ValueError: If ``config.NETWORK_PRESET`` is not a known preset.
-    """
     action_dim = env.action_space(env_params).n
     obs_shape = env.observation_space(env_params).shape
     obs_dtype = env.observation_space(env_params).dtype
-    obs_dim = math.prod(obs_shape)  # static (host-side) so make_train stays trace-safe
+    obs_dim = math.prod(obs_shape)
 
     def _build_q(key: jax.Array) -> eqx.Module:
-        if config.NETWORK_PRESET == "nature_cnn":
-            return NatureCNN(obs_shape, action_dim, key)
-        if config.NETWORK_PRESET == "mlp":
-            return QNetwork(obs_dim, action_dim, config.HIDDEN_SIZE, key)
-        raise ValueError(f"unknown NETWORK_PRESET {config.NETWORK_PRESET!r}")
+        match config.NETWORK_PRESET:
+            case 'atarinet': return AtariNet(obs_shape, action_dim, key)
+            case 'mlp': return QNetwork(obs_dim, action_dim, config.HIDDEN_SIZE, key)
+            case _: raise ValueError(f"unknown NETWORK_PRESET {config.NETWORK_PRESET!r}")
 
     buffer = fbx.make_item_buffer(
         max_length=config.BUFFER_SIZE,
@@ -192,7 +156,6 @@ def make_train(
     optimizer = optax.adam(config.LR, eps=config.ADAM_EPS)
 
     def train(rng: jax.Array) -> AgentTrainOutput:
-        """Run one seed of Double DQN and return its runner state and metrics."""
         zeros = jnp.zeros(obs_shape, dtype=obs_dtype)
         dummy_timestep = TimeStep(
             obs=zeros,
@@ -228,18 +191,21 @@ def make_train(
              step_key, reset_key, train_key) = jax.random.split(rng, 6)
 
             q_values = q(last_obs)
-            greedy_action = jnp.argmax(q_values).astype(jnp.int32)
+            greedy_action = jnp.argmax(q_values).astype(jnp.int32) # TODO: add random tie breaking
             random_action = jax.random.randint(
                 action_key, (), 0, action_dim, dtype=jnp.int32
             )
-            explore = jax.random.uniform(explore_key, ()) < epsilon
+            explore = jax.random.uniform(explore_key, ()) < epsilon # TODO: maybe build the e-greedy policy and directly sample from it
             action = jnp.where(explore, random_action, greedy_action)
 
             obsv, env_state, reward, terminated, truncated, info = env.step(
                 step_key, env_state, action, env_params
             )
 
-            buffer_state = buffer.add(
+            buffer_state = buffer.add( # TODO: this buffer is storing each obs twice,
+                                        # we should add custom Flashbax flat buffers that store each obs once,
+                                        # do not store duplicated frames, support n-step updates, and this would be where we build endpoint replay into DDQN
+                                        # note endpoint will requiring storing or accessing next action as well as next state.
                 buffer_state,
                 TimeStep(
                     obs=last_obs,
@@ -255,7 +221,8 @@ def make_train(
             # true boundary obs as next_obs. Conditional, not masked: a stateful
             # env (ale-py Atari) cannot have reset called on non-boundary steps,
             # since it mutates the emulator and no jnp.where can undo that.
-            obsv, env_state = jax.lax.cond(
+            obsv, env_state = jax.lax.cond( # TODO: this may be slowing us down. We should reconsider the env interface and find a way to avoid this cond.
+                                            # One option is to match the interface of all envs to be
                 terminated | truncated,
                 lambda: env.reset(reset_key, env_params),
                 lambda: (obsv, env_state),
@@ -310,7 +277,7 @@ def make_train(
 
             target_q = jax.lax.cond(
                 t % config.TARGET_NETWORK_FREQUENCY == 0,
-                lambda: polyak_update(target_q, q, config.TAU),
+                lambda: q,
                 lambda: target_q,
             )
 
