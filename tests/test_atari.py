@@ -172,23 +172,29 @@ def test_truncated_transition_stores_true_obs():
     exp = bs.experience
     trunc = np.asarray(exp.truncated)[0][:n].astype(bool)
     term = np.asarray(exp.terminated)[0][:n].astype(bool)
-# every pixel of a fake frame carries the step counter, so one pixel identifies the
-# frame
-
+    dead = np.asarray(exp.dead)[0][:n].astype(bool)
+    # every pixel of a fake frame carries the step counter, so one pixel
+    # identifies the frame
     nxt = np.asarray(exp.next_obs)[0][:n].reshape(n, -1)[:, 0]
     obs = np.asarray(exp.obs)[0][:n].reshape(n, -1)[:, 0]
 
     ends = np.flatnonzero(trunc)
-    # truncates at agent steps 4 and 8
-    assert list(ends) == [CUTOFF - 1, 2 * CUTOFF - 1]
+    # truncates at agent steps 4 and 8; the dead step at 5 shifts the second
+    # boundary from 7 to 8
+    assert list(ends) == [CUTOFF - 1, 2 * CUTOFF]
     # a cutoff truncates, never terminates
     assert not term.any()
     # the TRUE pre-truncation frame
     np.testing.assert_array_equal(nxt[ends], [CUTOFF, CUTOFF])
     # 0 == fresh-episode frame == the bug
     assert (nxt[ends] != 0).all()
-    # next transition starts from the reset
-    np.testing.assert_array_equal(obs[ends + 1], [0, 0])
+    # the dead step carries the true boundary frame forward as `obs`, and is
+    # the only place `next_obs` jumps to the reset sentinel
+    assert dead[ends[0] + 1]
+    assert obs[ends[0] + 1] == CUTOFF
+    assert nxt[ends[0] + 1] == 0
+    # the transition after that starts the new episode from the reset
+    assert obs[ends[0] + 2] == 0
 
 
 # --- DDQN on image obs in jit (fake env; reliable, no ale-py) ----------------
@@ -349,12 +355,11 @@ def test_atari_real_truncated_transition_is_not_the_reset_obs():
     """**Issue #1 end-to-end, against the real emulator.** Drive ``ddqn`` over real
     ale and check the buffer at a truncation.
 
-    The bug's exact signature was ``next_obs`` of the truncated transition being *the
-    same
-    frame* as the next transition's ``obs`` - both were the fresh episode's first frame,
-    because the wrapper reset in-step and the agent then didn't reset. Now the boundary
-    keeps
-    the true pre-truncation frame, so those two must differ."""
+    The bug's exact signature was the truncated transition's ``next_obs`` being
+    the fresh episode's first frame instead of the true pre-truncation one. Now
+    the boundary keeps the true frame, and the fabricated dead step that
+    follows it (tagged ``dead``) is the one that lands on a genuinely fresh
+    frame - which must differ from the boundary's own frame."""
     from agents.ddqn import DDQNConfig, make_train
     from environments import ENVIRONMENTS
     from environments.atari import AtariConfig
@@ -374,16 +379,21 @@ def test_atari_real_truncated_transition_is_not_the_reset_obs():
     n = int(np.asarray(bs.current_index))
     exp = bs.experience
     trunc = np.asarray(exp.truncated)[0][:n].astype(bool)
+    dead = np.asarray(exp.dead)[0][:n].astype(bool)
     nxt, obs = np.asarray(exp.next_obs)[0][:n], np.asarray(exp.obs)[0][:n]
 
     ends = np.flatnonzero(trunc)
-    # exact cutoff, twice in 45 steps
-    assert list(ends) == [CUTOFF - 1, 2 * CUTOFF - 1]
+    # exact cutoff, twice in 45 steps; the first dead step shifts the second
+    # boundary from 39 to 40
+    assert list(ends) == [CUTOFF - 1, 2 * CUTOFF]
     for e in ends:
-        assert not np.array_equal(nxt[e], obs[e + 1]), (
-            "truncated next_obs equals the following transition's obs -> "
-            "it is the fresh "
-            "episode's first frame, i.e. the issue #1 bug")
+        assert dead[e + 1], "the step after a boundary must be the dead step"
+        np.testing.assert_array_equal(obs[e + 1], nxt[e], err_msg=(
+            "the dead step should carry the true boundary frame forward "
+            "as its own obs"))
+        assert not np.array_equal(nxt[e], nxt[e + 1]), (
+            "the dead step's next_obs equals the boundary's own frame -> "
+            "it is not a fresh episode's first frame, i.e. the issue #1 bug")
 
 
 @ale_only

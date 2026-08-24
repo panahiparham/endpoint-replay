@@ -5,8 +5,11 @@ Double DQN implemented with Equinox Q-network and Flashbax replay buffer.
     a* = argmax_a Q_online(s', a)
     y  = r + γ Q_target(s', a*)   (masked by ``(1 - terminated)``)
 
-Truncated episodes still bootstrap; on ``terminated | truncated`` the agent
-resets for the next step after storing the true boundary ``next_obs``.
+Truncated episodes still bootstrap; on ``terminated | truncated`` the
+environment autoresets on the following step (NEXT_STEP), fabricating a
+"dead" transition that links two episodes. That transition is stored with
+``TimeStep.dead=True`` and masked out of the loss, never the reset itself -
+the agent does not reset anything.
 
 The Q-network presets (``mlp`` / ``atarinet``), the buffer's transition type,
 and the scan carry live here alongside the agent, since this is currently the
@@ -35,6 +38,7 @@ class TimeStep(NamedTuple):
     next_obs: jax.Array
     terminated: jax.Array
     truncated: jax.Array
+    dead: jax.Array
 
 
 class QNetwork(eqx.Module):
@@ -103,6 +107,7 @@ class RunnerState(NamedTuple):
     buffer_state: object
     env_state: object
     last_obs: jax.Array
+    prev_done: jax.Array
     rng: jax.Array
 
 
@@ -164,6 +169,7 @@ def make_train(
             next_obs=zeros,
             terminated=jnp.asarray(False),
             truncated=jnp.asarray(False),
+            dead=jnp.asarray(False),
         )
         buffer_state = buffer.init(dummy_timestep)
 
@@ -178,7 +184,7 @@ def make_train(
             runner_state: RunnerState, t: jax.Array
         ) -> tuple[RunnerState, dict[str, jax.Array]]:
             (q, target_q, opt_state, buffer_state,
-             env_state, last_obs, rng) = runner_state
+             env_state, last_obs, prev_done, rng) = runner_state
 
             epsilon = jnp.maximum(
                 config.EPSILON_END,
@@ -188,7 +194,7 @@ def make_train(
             )
 
             (rng, action_key, explore_key,
-             step_key, reset_key, train_key) = jax.random.split(rng, 6)
+             step_key, train_key) = jax.random.split(rng, 5)
 
             q_values = q(last_obs)
             greedy_action = jnp.argmax(q_values).astype(jnp.int32) # TODO: add random tie breaking
@@ -202,6 +208,10 @@ def make_train(
                 step_key, env_state, action, env_params
             )
 
+            # The env autoresets on NEXT_STEP (see environments.gym_env): when
+            # prev_done is True, this transition is the fabricated dead step
+            # linking two episodes. It is stored (dead=True) so the buffer
+            # stays a plain, uniform stream, then masked out of the loss below.
             buffer_state = buffer.add( # TODO: this buffer is storing each obs twice,
                                         # we should add custom Flashbax flat buffers that store each obs once,
                                         # do not store duplicated frames, support n-step updates, and this would be where we build endpoint replay into DDQN
@@ -214,18 +224,8 @@ def make_train(
                     next_obs=obsv,
                     terminated=terminated,
                     truncated=truncated,
+                    dead=prev_done,
                 ),
-            )
-
-            # Reset for the next step, *after* the transition above captured the
-            # true boundary obs as next_obs. Conditional, not masked: a stateful
-            # env (ale-py Atari) cannot have reset called on non-boundary steps,
-            # since it mutates the emulator and no jnp.where can undo that.
-            obsv, env_state = jax.lax.cond( # TODO: this may be slowing us down. We should reconsider the env interface and find a way to avoid this cond.
-                                            # One option is to match the interface of all envs to be
-                terminated | truncated,
-                lambda: env.reset(reset_key, env_params),
-                lambda: (obsv, env_state),
             )
 
             def _do_train(
@@ -252,7 +252,15 @@ def make_train(
                     target = batch.reward + config.GAMMA * next_q * (
                         1.0 - batch.terminated.astype(jnp.float32)
                     )
-                    return jnp.mean(jnp.square(q_a - jax.lax.stop_gradient(target)))
+                    target = jax.lax.stop_gradient(target)
+                    # A dead transition fabricates a link between two episodes
+                    # and must never train: mask it out rather than skip the
+                    # add, since a per-sample lax.cond on `dead` would also
+                    # lower to a select and add it anyway.
+                    valid = ~batch.dead
+                    return jnp.sum(
+                        valid * jnp.square(q_a - target)
+                    ) / jnp.maximum(jnp.sum(valid), 1)
 
                 loss, grads = eqx.filter_value_and_grad(loss_fn)(q)
                 updates, opt_state = optimizer.update(
@@ -285,6 +293,7 @@ def make_train(
                 "reward": reward,
                 "terminated": terminated,
                 "truncated": truncated,
+                "dead": prev_done,
                 "loss": loss,
                 "epsilon": epsilon,
                 **info,
@@ -297,6 +306,7 @@ def make_train(
                     buffer_state=buffer_state,
                     env_state=env_state,
                     last_obs=obsv,
+                    prev_done=terminated | truncated,
                     rng=rng,
                 ),
                 metrics,
@@ -309,6 +319,7 @@ def make_train(
             buffer_state=buffer_state,
             env_state=env_state,
             last_obs=obsv,
+            prev_done=jnp.asarray(False),
             rng=rng,
         )
         runner_state, metrics = jax.lax.scan(
