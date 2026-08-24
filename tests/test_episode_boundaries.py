@@ -132,7 +132,8 @@ def _buffer(out):
 
 def test_pinball_split_and_truncation_at_cutoff():
     """Pinball reports terminated/truncated separately; a short cutoff truncates
-    (terminated stays False) and the two flags are never simultaneously true."""
+    (terminated stays False) and the two flags are never simultaneously true.
+    Also tests the NEXT_STEP dead-step behavior after the boundary."""
     from environments.pinball import PinballConfig, build
 
     env, params = build(PinballConfig(SETTING="empty", EPISODE_CUTOFF=5))
@@ -149,6 +150,14 @@ def test_pinball_split_and_truncation_at_cutoff():
     assert [tr for _, tr, _ in rows] == [False, False, False, False, True]
     # truncation, not termination
     assert rows[-1][0] is False
+
+    # Dead step: a different action (1, not 0) proves it's ignored.
+    obs, st, r, term, trunc, info = env.step(
+        jax.random.key(5), st, jnp.int32(1), params
+    )
+    assert float(r) == 0.0
+    assert not bool(term)
+    assert not bool(trunc)
 
 
 # ===========================================================================
