@@ -63,18 +63,38 @@ def episode_returns(reward, terminated, truncated):
     return ends, cumr[ends] - prev
 
 
-def episode_lengths(ends):
+def episode_lengths(ends, dead=None):
     """Each episode's length in timesteps, from its end timestep.
+
+    Every env in this repo autoresets NEXT_STEP-style: the step after a
+    boundary is a "dead" step, storing a fabricated transition rather than
+    counting toward any episode. That step still consumes one index of the
+    run's ``TOTAL_TIMESTEPS`` budget (about 0.1% at Pinball's 1000-step
+    cutoff), so ``ends`` (from :func:`episode_returns`, computed on the raw
+    per-timestep stream) has one dead index sitting between every two
+    episodes. A plain ``diff`` therefore counts every episode after the
+    first as one step too long; passing ``dead`` corrects for it.
 
     Args:
         ends: 0-indexed episode end timesteps, from :func:`episode_returns`.
+        dead: Per-timestep ``dead`` flags for the same run, or ``None`` to
+            skip the correction (e.g. for data with no dead steps at all).
 
     Returns:
         The matching lengths. ``ends`` are inclusive end indices, so the
         first episode's length is ``ends[0] + 1``, hence ``prepend=-1``
-        (timestep -1: "before the run starts") rather than 0.
+        (timestep -1: "before the run starts") rather than 0. With ``dead``
+        given, each length also excludes the dead steps within its span.
     """
-    return np.diff(np.asarray(ends), prepend=-1)
+    ends = np.asarray(ends)
+    raw = np.diff(ends, prepend=-1)
+    if dead is None:
+        return raw
+    dead = np.asarray(dead, dtype=bool)
+    cum = np.concatenate(([0], np.cumsum(dead)))
+    starts = np.concatenate(([0], ends[:-1] + 1))
+    dead_in_span = cum[ends + 1] - cum[starts]
+    return raw - dead_in_span
 
 
 def weighted_lifetime_return(reward, terminated, truncated):
