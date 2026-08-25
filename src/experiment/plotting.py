@@ -97,7 +97,7 @@ def episode_lengths(ends, dead=None):
     return raw - dead_in_span
 
 
-def weighted_lifetime_return(reward, terminated, truncated):
+def weighted_lifetime_return(reward, terminated, truncated, dead=None):
     """Summarize one run as its length-weighted mean episode return.
 
     Longer episodes count for more than shorter ones, unlike a plain mean over
@@ -108,6 +108,9 @@ def weighted_lifetime_return(reward, terminated, truncated):
         reward: Per-timestep reward for one run.
         terminated: Per-timestep termination flags.
         truncated: Per-timestep truncation flags.
+        dead: Per-timestep ``dead`` flags for the same run, passed through to
+            :func:`episode_lengths`, or ``None`` for data with no dead steps
+            (e.g. historical runs recorded before NEXT_STEP autoreset).
 
     Returns:
         ``sum(return_i * length_i) / sum(length_i)`` over completed episodes,
@@ -116,7 +119,7 @@ def weighted_lifetime_return(reward, terminated, truncated):
     ends, rets = episode_returns(reward, terminated, truncated)
     if ends.size == 0:
         return float("nan")
-    return float(np.average(rets, weights=episode_lengths(ends)))
+    return float(np.average(rets, weights=episode_lengths(ends, dead=dead)))
 
 
 def average_lifetime_reward(reward):
@@ -303,7 +306,9 @@ def weighted_lifetime_return_stack(results_dir, column, values):
         widest column is padded with NaN.
     """
     def metric(c):
-        return weighted_lifetime_return(c["reward"], c["terminated"], c["truncated"])
+        return weighted_lifetime_return(
+            c["reward"], c["terminated"], c["truncated"], dead=c.get("dead")
+        )
 
     return _metric_stack(results_dir, column, values, metric)
 

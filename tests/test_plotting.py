@@ -105,6 +105,25 @@ def test_weighted_lifetime_return_nan_with_no_completed_episode():
     assert np.isnan(weighted_lifetime_return(reward, terminated, truncated))
 
 
+def test_weighted_lifetime_return_corrects_for_dead_steps():
+    """The same dead-step inflation that biases episode_lengths biases the
+    length-weighted average too, since it weights by length: episode 1 is
+    length 2 (return 10), a dead step follows, then episode 2 is length 5
+    (return -10). Uncorrected, episode 2's weight is inflated to 6, pulling
+    the weighted average toward its (negative) return more than it should."""
+    reward = [10, 0, 0, -2, -2, -2, -2, -2]
+    terminated = [0, 1, 0, 0, 0, 0, 0, 1]
+    truncated = [0] * len(reward)
+    dead = [0, 0, 1, 0, 0, 0, 0, 0]
+
+    wrong = weighted_lifetime_return(reward, terminated, truncated)
+    corrected = weighted_lifetime_return(reward, terminated, truncated, dead=dead)
+
+    assert wrong == pytest.approx((10 * 2 + -10 * 6) / 8)       # weights [2, 6]
+    assert corrected == pytest.approx((10 * 2 + -10 * 5) / 7)   # weights [2, 5]
+    assert wrong != pytest.approx(corrected)
+
+
 # --- average_lifetime_reward -------------------------------------------------
 
 
