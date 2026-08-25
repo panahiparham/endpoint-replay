@@ -26,6 +26,7 @@ from experiment.plotting import (
     ema_reward,
     ema_reward_grids_for,
     episode_lengths,
+    episode_returns,
     seed_grids_for,
     style,
     weighted_lifetime_return,
@@ -69,6 +70,25 @@ def test_episode_lengths():
     # ends are inclusive 0-indexed positions: episode 0 spans indices 0-1 (len
     # 2), episode 1 spans 2-5 (len 4), episode 2 is just index 6 (len 1)
     assert list(episode_lengths(np.array([1, 5, 6]))) == [2, 4, 1]
+
+
+def test_episode_lengths_corrects_for_dead_steps():
+    """Hand-computed run of 3 episodes (lengths 3, 2, 4), each followed by a
+    NEXT_STEP dead step (reward 0) except the last. A plain diff on `ends`
+    over-counts every episode after the first by exactly one - the dead step
+    sitting right before it - unless `dead` is passed to correct for it."""
+    reward = [1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1]
+    terminated = [0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1]
+    truncated = [0] * len(reward)
+    dead = [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0]
+
+    ends, rets = episode_returns(reward, terminated, truncated)
+    assert list(ends) == [2, 5, 10]
+    assert list(rets) == [3.0, 2.0, 4.0]              # episode_returns is exact
+
+    assert list(episode_lengths(ends)) == [3, 3, 5]   # uncorrected: off by one
+                                                        # for every later episode
+    assert list(episode_lengths(ends, dead=dead)) == [3, 2, 4]  # corrected
 
 
 def test_weighted_lifetime_return_weights_by_length():
