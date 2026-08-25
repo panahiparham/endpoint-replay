@@ -100,6 +100,45 @@ class AtariNet(eqx.Module):
         return self.out(x)
 
 
+def _masked_td_loss(
+    q: QNetwork, target_q: QNetwork, batch: TimeStep, gamma: float
+) -> jax.Array:
+    """Double DQN TD loss over a sampled batch, excluding dead transitions.
+
+    Args:
+        q: The online network; ``q(obs)`` selects the bootstrap action.
+        target_q: The target network; evaluates the selected action's value.
+        batch: A batch of ``TimeStep``s, e.g. from ``buffer.sample(...).experience``.
+        gamma: Discount factor.
+
+    Returns:
+        The mean squared TD error over ``batch``, excluding any transition
+        with ``dead=True`` (a fabricated NEXT_STEP transition linking two
+        episodes) from both the numerator and the averaging denominator. Zero
+        if every transition in ``batch`` is dead.
+    """
+    q_sa = jax.vmap(q)(batch.obs)
+    q_a = jnp.take_along_axis(q_sa, batch.action[:, None], axis=-1).squeeze(-1)
+    # Double DQN: online net selects, target net evaluates.
+    next_online = jax.vmap(q)(batch.next_obs)
+    next_actions = jnp.argmax(next_online, axis=-1)
+    next_target = jax.vmap(target_q)(batch.next_obs)
+    next_q = jnp.take_along_axis(
+        next_target, next_actions[:, None], axis=-1
+    ).squeeze(-1)
+    target = batch.reward + gamma * next_q * (
+        1.0 - batch.terminated.astype(jnp.float32)
+    )
+    target = jax.lax.stop_gradient(target)
+    # A dead transition fabricates a link between two episodes and must
+    # never train: mask it out rather than skip the add, since a per-sample
+    # lax.cond on `dead` would also lower to a select and add it anyway.
+    valid = ~batch.dead
+    return jnp.sum(valid * jnp.square(q_a - target)) / jnp.maximum(
+        jnp.sum(valid), 1
+    )
+
+
 class RunnerState(NamedTuple):
     q: eqx.Module
     target_q: eqx.Module
@@ -238,29 +277,7 @@ def make_train(
                 batch = buffer.sample(buffer_state, key).experience
 
                 def loss_fn(q: QNetwork) -> jax.Array:
-                    q_sa = jax.vmap(q)(batch.obs)
-                    q_a = jnp.take_along_axis(
-                        q_sa, batch.action[:, None], axis=-1
-                    ).squeeze(-1)
-                    # Double DQN: online net selects, target net evaluates.
-                    next_online = jax.vmap(q)(batch.next_obs)
-                    next_actions = jnp.argmax(next_online, axis=-1)
-                    next_target = jax.vmap(target_q)(batch.next_obs)
-                    next_q = jnp.take_along_axis(
-                        next_target, next_actions[:, None], axis=-1
-                    ).squeeze(-1)
-                    target = batch.reward + config.GAMMA * next_q * (
-                        1.0 - batch.terminated.astype(jnp.float32)
-                    )
-                    target = jax.lax.stop_gradient(target)
-                    # A dead transition fabricates a link between two episodes
-                    # and must never train: mask it out rather than skip the
-                    # add, since a per-sample lax.cond on `dead` would also
-                    # lower to a select and add it anyway.
-                    valid = ~batch.dead
-                    return jnp.sum(
-                        valid * jnp.square(q_a - target)
-                    ) / jnp.maximum(jnp.sum(valid), 1)
+                    return _masked_td_loss(q, target_q, batch, config.GAMMA)
 
                 loss, grads = eqx.filter_value_and_grad(loss_fn)(q)
                 updates, opt_state = optimizer.update(
