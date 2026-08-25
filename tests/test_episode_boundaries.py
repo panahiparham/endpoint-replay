@@ -283,6 +283,55 @@ def test_ddqn_no_termination_matches_pure_truncation():
         np.testing.assert_array_equal(x, y)
 
 
+def test_dead_transition_masked_out_of_the_loss():
+    """``_masked_td_loss`` must give a dead-tagged row zero weight.
+
+    A batch with two dead rows holding extreme (obs, action, reward,
+    next_obs) values - the kind that would blow up the loss if they trained -
+    must produce EXACTLY the loss of the same batch with those rows dropped.
+    A batch of only dead rows must return 0, not NaN or a division artifact.
+    """
+    from agents.ddqn import QNetwork, TimeStep, _masked_td_loss
+
+    qkey, tkey = jax.random.split(jax.random.key(0))
+    q = QNetwork(obs_dim=1, action_dim=2, hidden_size=4, key=qkey)
+    target_q = QNetwork(obs_dim=1, action_dim=2, hidden_size=4, key=tkey)
+
+    live = TimeStep(
+        obs=jnp.array([[0.0], [1.0], [2.0]], jnp.float32),
+        action=jnp.array([0, 1, 0], jnp.int32),
+        reward=jnp.array([1.0, -1.0, 0.5], jnp.float32),
+        next_obs=jnp.array([[1.0], [2.0], [0.0]], jnp.float32),
+        terminated=jnp.array([False, True, False]),
+        truncated=jnp.array([False, False, False]),
+        dead=jnp.array([False, False, False]),
+    )
+    # extreme enough that an unmasked mean would clearly move
+    dead = TimeStep(
+        obs=jnp.array([[999.0], [-999.0]], jnp.float32),
+        action=jnp.array([1, 0], jnp.int32),
+        reward=jnp.array([12345.0, -12345.0], jnp.float32),
+        next_obs=jnp.array([[999.0], [-999.0]], jnp.float32),
+        terminated=jnp.array([False, False]),
+        truncated=jnp.array([False, False]),
+        dead=jnp.array([True, True]),
+    )
+    full = jax.tree.map(lambda a, b: jnp.concatenate([a, b]), live, dead)
+
+    masked_loss = _masked_td_loss(q, target_q, full, gamma=0.99)
+    live_only_loss = _masked_td_loss(q, target_q, live, gamma=0.99)
+    np.testing.assert_array_equal(masked_loss, live_only_loss)
+
+    # sanity: the dead rows really would move the result if left unmasked
+    unmasked = full._replace(dead=jnp.zeros_like(full.dead))
+    unmasked_loss = _masked_td_loss(q, target_q, unmasked, gamma=0.99)
+    assert not np.allclose(unmasked_loss, masked_loss)
+
+    # all-dead batch: no division by zero, loss is exactly 0
+    all_dead_loss = _masked_td_loss(q, target_q, dead, gamma=0.99)
+    assert float(all_dead_loss) == 0.0
+
+
 # ===========================================================================
 # 4. Analysis: episode segmentation on either boundary flag
 # ===========================================================================
