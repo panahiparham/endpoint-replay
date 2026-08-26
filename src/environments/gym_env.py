@@ -64,16 +64,26 @@ class GymEnv[ActionSpaceT](Protocol):
     ) -> tuple[
         jax.Array, object, jax.Array, jax.Array, jax.Array, dict[str, jax.Array]
     ]:
-        """Advance one timestep, without resetting on a boundary.
+        """Advance one timestep with automatic episode resets.
+
+        On an episode boundary (when ``terminated`` or ``truncated`` is true),
+        this step returns the true final observation of that episode. The
+        immediately following step is a "dead" step: it ignores the provided
+        ``action``, returns the initial observation of the new episode, and
+        reports ``reward=0.0`` with both flags false. The environment resets
+        itself on the dead step; explicit ``reset`` calls are needed only at
+        the very start of a run.
 
         Args:
             key: PRNG key for any stochastic transition.
             state: The current environment state.
-            action: The action to take.
+            action: The action to take (ignored on dead steps).
             params: Environment parameters, or ``None`` for the env's own.
 
         Returns:
-            ``(obs, state, reward, terminated, truncated, info)``. ``obs`` is the
-            true boundary observation on a terminal step; the caller resets.
+            ``(obs, state, reward, terminated, truncated, info)``. On a
+            boundary step, ``obs`` is the true final observation of the
+            episode. On the following dead step, ``obs`` is the new episode's
+            initial observation, ``reward`` is 0.0, and both flags are false.
         """
         ...

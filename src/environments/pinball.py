@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 from pinball_jax import Pinball, PinballParams
 
+from environments.autoreset import AutoresetNextStep
+
 
 @dataclass(frozen=True)
 class PinballConfig:
@@ -29,5 +31,6 @@ def build(config: PinballConfig):
         An ``(env, env_params)`` pair for the repo env protocol.
     """
     env = Pinball(config.SETTING)
+    env = AutoresetNextStep(env)
     env_params = PinballParams(max_steps_in_episode=config.EPISODE_CUTOFF)
     return env, env_params

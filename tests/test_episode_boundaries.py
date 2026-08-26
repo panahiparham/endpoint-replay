@@ -6,16 +6,17 @@ The RL contract this suite pins down:
 * **Environments** report ``terminated`` (a real MDP terminal - no bootstrap) and
   ``truncated`` (a time-limit cutoff - bootstrap continues) as *separate* flags,
   never merged, and never both true in a way that would corrupt the update.
-* **Environments never reset themselves.** Every env here (pinball, Atari)
-  returns the *true* boundary observation and leaves the reset to the agent, so there
-  is one uniform contract and no ``auto_resets`` special case.
-* **Agents reset on ``terminated | truncated``**, and *conditionally* (``lax.cond``,
-  not a masked ``env.reset`` every step) - a stateful env like ale-py Atari cannot
-  have ``reset`` called on non-boundary steps.
-* **The replay agent** (``ddqn``) stores, for each transition, the ``next_obs``
-  the agent actually *observed at that step* - the true terminal / truncation
-  observation - **before** that reset overwrites it, so a truncated transition
-  bootstraps from the right state.
+* **Environments autoreset on the step after a boundary (NEXT_STEP).** Every
+  env here (pinball, wrapped; Atari, natively) returns the *true* boundary
+  observation on the step that ends an episode, then a "dead" step the
+  following step: it ignores the action and returns a fresh episode's
+  initial observation with ``reward=0`` and both flags false.
+* **The agent does not reset anything.** It just steps; the environment
+  autoresets itself.
+* **The replay agent** (``ddqn``) stores every transition, including the dead
+  one, but tags it ``dead=True`` (the previous step's
+  ``terminated | truncated``) and masks it out of the TD loss, since it
+  fabricates a link between two episodes that must never train.
 * **The DDQN TD target** masks the bootstrap with ``(1 - terminated)`` only, so a
   *truncated* episode-end still bootstraps and a *terminated* one does not.
 * **Analysis** (``plotting.episode_returns``) segments episodes on either flag.
@@ -64,8 +65,9 @@ class FakeEnv:
     observation apart from the fresh-episode observation in the replay buffer.
 
     ``mode`` picks whether an episode-end is reported as ``terminated`` or
-    ``truncated``. Like every real env in this repo, it never resets itself - it returns
-    the true boundary obs and the agent is responsible for calling ``reset``.
+    ``truncated``. DISABLED-mode, like the raw ``pinball_jax`` env: it never
+    resets itself, it returns the true boundary obs. ``_run_agent`` wraps it
+    in ``AutoresetNextStep``, same as ``pinball.py``'s ``build``.
     """
 
     RESET_OBS = -1.0
@@ -101,19 +103,21 @@ class FakeEnv:
 
 
 def _run_agent(env, *, total, buffer_size=64, **overrides):
-    """Run DDQN on ``env`` and return the jitted train output pytree."""
+    """Run DDQN on ``env`` (wrapped in ``AutoresetNextStep``) and return the
+    jitted train output pytree."""
     from agents.ddqn import DDQNConfig, make_train
+    from environments.autoreset import AutoresetNextStep
 
     cfg = DDQNConfig(TOTAL_TIMESTEPS=total, BUFFER_SIZE=buffer_size, BATCH_SIZE=2,
                      # no training: pure buffer
                      LEARNING_STARTS=total, HIDDEN_SIZE=8, **overrides)
-    out = jax.jit(make_train(cfg, env, None))(jax.random.key(0))
+    out = jax.jit(make_train(cfg, AutoresetNextStep(env), None))(jax.random.key(0))
     return jax.block_until_ready(out)
 
 
 def _buffer(out):
     """Flat per-transition arrays actually written to the item buffer, in add order:
-    ``{"obs", "next_obs", "terminated", "truncated"}`` (each length = #adds)."""
+    ``{"obs", "next_obs", "terminated", "truncated", "dead"}`` (each length = #adds)."""
     bs = out["runner_state"].buffer_state
     n = int(np.asarray(bs.current_index))
     exp = bs.experience
@@ -122,6 +126,7 @@ def _buffer(out):
         "next_obs": np.asarray(exp.next_obs).reshape(-1)[:n],
         "terminated": np.asarray(exp.terminated).reshape(-1)[:n].astype(bool),
         "truncated": np.asarray(exp.truncated).reshape(-1)[:n].astype(bool),
+        "dead": np.asarray(exp.dead).reshape(-1)[:n].astype(bool),
     }
 
 
@@ -132,7 +137,8 @@ def _buffer(out):
 
 def test_pinball_split_and_truncation_at_cutoff():
     """Pinball reports terminated/truncated separately; a short cutoff truncates
-    (terminated stays False) and the two flags are never simultaneously true."""
+    (terminated stays False) and the two flags are never simultaneously true.
+    Also tests the NEXT_STEP dead-step behavior after the boundary."""
     from environments.pinball import PinballConfig, build
 
     env, params = build(PinballConfig(SETTING="empty", EPISODE_CUTOFF=5))
@@ -150,17 +156,27 @@ def test_pinball_split_and_truncation_at_cutoff():
     # truncation, not termination
     assert rows[-1][0] is False
 
+    # Dead step: a different action (1, not 0) proves it's ignored.
+    obs, st, r, term, trunc, info = env.step(
+        jax.random.key(5), st, jnp.int32(1), params
+    )
+    assert float(r) == 0.0
+    assert not bool(term)
+    assert not bool(trunc)
+
 
 # ===========================================================================
-# 2. Replay-buffer boundary handling (the agent resets on done)
+# 2. Replay-buffer boundary handling (the env autoresets on the dead step)
 # ===========================================================================
 
 
 @pytest.mark.parametrize("mode", ["terminated", "truncated"])
 def test_buffer_stores_true_boundary_next_obs(mode):
     """The transition at an episode boundary stores the *true* terminal/truncation
-    observation as ``next_obs`` (captured before the agent's reset), and the *following*
-    transition's ``obs`` is the reset obs.
+    observation as ``next_obs``. The *following* transition is the fabricated
+    NEXT_STEP dead step: it is tagged ``dead=True``, carries the true boundary
+    obs forward as its own ``obs``, and lands on the reset obs as ``next_obs``.
+    The transition after THAT starts the new episode from the reset obs.
 
     This is the property that makes a truncated transition bootstrap from the
     correct state - the most error-prone part of the loop.
@@ -172,32 +188,41 @@ def test_buffer_stores_true_boundary_next_obs(mode):
     other = buf["truncated" if mode == "terminated" else "terminated"]
     ends = np.flatnonzero(flag)
 
-    assert list(ends) == [2, 5]                              # every 3rd step ends
+    # every 3rd step ends; the dead step at 3 shifts the second boundary from
+    # 5 to 6
+    assert list(ends) == [2, 6]
     # only the intended flag fires
     assert not other.any()
     # next_obs at a boundary is the true terminal obs (counter==3.0), NOT reset(-1)
     np.testing.assert_array_equal(buf["next_obs"][ends], [3.0, 3.0])
-    # the transition right after a boundary starts from the reset observation
-    np.testing.assert_array_equal(
-        buf["obs"][ends + 1], [FakeEnv.RESET_OBS, FakeEnv.RESET_OBS]
-    )
+
+    dead_idx = ends[0] + 1
+    assert buf["dead"][dead_idx]
+    assert buf["obs"][dead_idx] == 3.0            # the true boundary obs, carried
+    assert buf["next_obs"][dead_idx] == FakeEnv.RESET_OBS
+    assert buf["obs"][dead_idx + 1] == FakeEnv.RESET_OBS   # new episode starts here
+
     # first obs is the initial reset
     assert buf["obs"][0] == FakeEnv.RESET_OBS
 
 
 def test_buffer_next_obs_matches_within_episode_continuity():
-    """Within an episode the stored transitions chain: each ``next_obs`` equals the
-    following transition's ``obs`` (continuity), and that chain breaks *only* at a
-    reset (episode boundary)."""
+    """Every stored transition chains to the next: ``next_obs[i] == obs[i+1]``
+    holds even across a boundary, since the NEXT_STEP dead step is itself a
+    stored transition rather than a skip - the chain never breaks. What marks
+    the dead step as not a real transition is ``dead``, not a break in obs
+    continuity."""
     env = FakeEnv(period=4, mode="terminated")
     buf = _buffer(_run_agent(env, total=9))
-    ends = set(np.flatnonzero(buf["terminated"]))
     for i in range(len(buf["obs"]) - 1):
-        if i in ends:
-            assert buf["obs"][i + 1] == FakeEnv.RESET_OBS    # reset breaks the chain
-        else:
-            # continuity within an episode
-            assert buf["next_obs"][i] == buf["obs"][i + 1]
+        assert buf["next_obs"][i] == buf["obs"][i + 1]
+
+    ends = np.flatnonzero(buf["terminated"])
+    dead = np.flatnonzero(buf["dead"])
+    assert list(ends) == [3, 8]
+    assert list(dead) == [4]                          # only the first boundary's
+                                                        # dead step falls in range
+    assert buf["next_obs"][dead[0]] == FakeEnv.RESET_OBS
 
 
 # ===========================================================================
@@ -206,17 +231,19 @@ def test_buffer_next_obs_matches_within_episode_continuity():
 
 
 def _ddqn_q_leaves(env, *, seed=0):
-    """Run DDQN (with training on) on ``env`` and return its online-Q array leaves."""
+    """Run DDQN (with training on) on ``env`` (wrapped in ``AutoresetNextStep``)
+    and return its online-Q array leaves."""
     import equinox as eqx
 
     from agents.ddqn import DDQNConfig, make_train
+    from environments.autoreset import AutoresetNextStep
 
     cfg = DDQNConfig(TOTAL_TIMESTEPS=80, BUFFER_SIZE=256, BATCH_SIZE=8,
                      LEARNING_STARTS=8,
                      TRAIN_FREQUENCY=1, TARGET_NETWORK_FREQUENCY=10, HIDDEN_SIZE=16,
                      # all-random actions -> identical data
                      EPSILON_START=1.0, EPSILON_END=1.0)
-    out = jax.jit(make_train(cfg, env, None))(jax.random.key(seed))
+    out = jax.jit(make_train(cfg, AutoresetNextStep(env), None))(jax.random.key(seed))
     q = out["runner_state"].q
     return jax.tree.leaves(eqx.filter(q, eqx.is_array))
 
@@ -254,6 +281,55 @@ def test_ddqn_no_termination_matches_pure_truncation():
     b = _ddqn_q_leaves(FakeEnv(period=4, mode="truncated"), seed=1)
     for x, y in zip(a, b):
         np.testing.assert_array_equal(x, y)
+
+
+def test_dead_transition_masked_out_of_the_loss():
+    """``_masked_td_loss`` must give a dead-tagged row zero weight.
+
+    A batch with two dead rows holding extreme (obs, action, reward,
+    next_obs) values - the kind that would blow up the loss if they trained -
+    must produce EXACTLY the loss of the same batch with those rows dropped.
+    A batch of only dead rows must return 0, not NaN or a division artifact.
+    """
+    from agents.ddqn import QNetwork, TimeStep, _masked_td_loss
+
+    qkey, tkey = jax.random.split(jax.random.key(0))
+    q = QNetwork(obs_dim=1, action_dim=2, hidden_size=4, key=qkey)
+    target_q = QNetwork(obs_dim=1, action_dim=2, hidden_size=4, key=tkey)
+
+    live = TimeStep(
+        obs=jnp.array([[0.0], [1.0], [2.0]], jnp.float32),
+        action=jnp.array([0, 1, 0], jnp.int32),
+        reward=jnp.array([1.0, -1.0, 0.5], jnp.float32),
+        next_obs=jnp.array([[1.0], [2.0], [0.0]], jnp.float32),
+        terminated=jnp.array([False, True, False]),
+        truncated=jnp.array([False, False, False]),
+        dead=jnp.array([False, False, False]),
+    )
+    # extreme enough that an unmasked mean would clearly move
+    dead = TimeStep(
+        obs=jnp.array([[999.0], [-999.0]], jnp.float32),
+        action=jnp.array([1, 0], jnp.int32),
+        reward=jnp.array([12345.0, -12345.0], jnp.float32),
+        next_obs=jnp.array([[999.0], [-999.0]], jnp.float32),
+        terminated=jnp.array([False, False]),
+        truncated=jnp.array([False, False]),
+        dead=jnp.array([True, True]),
+    )
+    full = jax.tree.map(lambda a, b: jnp.concatenate([a, b]), live, dead)
+
+    masked_loss = _masked_td_loss(q, target_q, full, gamma=0.99)
+    live_only_loss = _masked_td_loss(q, target_q, live, gamma=0.99)
+    np.testing.assert_array_equal(masked_loss, live_only_loss)
+
+    # sanity: the dead rows really would move the result if left unmasked
+    unmasked = full._replace(dead=jnp.zeros_like(full.dead))
+    unmasked_loss = _masked_td_loss(q, target_q, unmasked, gamma=0.99)
+    assert not np.allclose(unmasked_loss, masked_loss)
+
+    # all-dead batch: no division by zero, loss is exactly 0
+    all_dead_loss = _masked_td_loss(q, target_q, dead, gamma=0.99)
+    assert float(all_dead_loss) == 0.0
 
 
 # ===========================================================================
