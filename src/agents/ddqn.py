@@ -35,7 +35,6 @@ class TimeStep(NamedTuple):
     obs: jax.Array
     action: jax.Array
     reward: jax.Array
-    next_obs: jax.Array
     terminated: jax.Array
     truncated: jax.Array
     dead: jax.Array
@@ -125,37 +124,52 @@ def _epsilon_greedy_action(
 def _masked_td_loss(
     q: QNetwork, target_q: QNetwork, batch: TimeStep, gamma: float
 ) -> jax.Array:
-    """Double DQN TD loss over a sampled batch, excluding dead transitions.
+    """Double DQN n-step TD loss over a sampled batch, excluding dead windows.
 
     Args:
         q: The online network; ``q(obs)`` selects the bootstrap action.
         target_q: The target network; evaluates the selected action's value.
-        batch: A batch of ``TimeStep``s, e.g. from ``buffer.sample(...).experience``.
+        batch: A batch of ``[B, N+1, ...]`` ``TimeStep`` windows, e.g. from
+            ``buffer.sample(...).experience``.
         gamma: Discount factor.
 
     Returns:
-        The mean squared TD error over ``batch``, excluding any transition
-        with ``dead=True`` (a fabricated NEXT_STEP transition linking two
-        episodes) from both the numerator and the averaging denominator. Zero
-        if every transition in ``batch`` is dead.
+        The mean squared TD error over ``batch``, excluding any window whose
+        first transition has ``dead=True`` (a fabricated NEXT_STEP transition
+        linking two episodes) from both the numerator and the averaging
+        denominator. Zero if every window in ``batch`` is dead.
     """
-    q_sa = jax.vmap(q)(batch.obs)
-    q_a = jnp.take_along_axis(q_sa, batch.action[:, None], axis=-1).squeeze(-1)
+    n_step = batch.reward.shape[1] - 1
+    q_sa = jax.vmap(q)(batch.obs[:, 0])
+    q_a = jnp.take_along_axis(q_sa, batch.action[:, 0, None], axis=-1).squeeze(-1)
+
+    done = (batch.terminated | batch.truncated)[:, :-1]
+    alive = jnp.cumprod(1.0 - done.astype(jnp.float32), axis=1)
+    w = jnp.concatenate([jnp.ones_like(alive[:, :1]), alive[:, :-1]], axis=1)
+
+    discount = gamma ** jnp.arange(n_step)
+    G = jnp.sum(w * discount * batch.reward[:, :n_step], axis=1)
+    n = jnp.sum(w, axis=1).astype(jnp.int32)
+
+    n_bcast = n.reshape((-1,) + (1,) * (batch.obs.ndim - 1))
+    boot_obs = jnp.take_along_axis(batch.obs, n_bcast, axis=1)[:, 0]
+    term_cut = jnp.take_along_axis(
+        batch.terminated[:, :n_step], (n - 1)[:, None], axis=1
+    ).squeeze(-1)
+
     # Double DQN: online net selects, target net evaluates.
-    next_online = jax.vmap(q)(batch.next_obs)
+    next_online = jax.vmap(q)(boot_obs)
     next_actions = jnp.argmax(next_online, axis=-1)
-    next_target = jax.vmap(target_q)(batch.next_obs)
+    next_target = jax.vmap(target_q)(boot_obs)
     next_q = jnp.take_along_axis(
         next_target, next_actions[:, None], axis=-1
     ).squeeze(-1)
-    target = batch.reward + gamma * next_q * (
-        1.0 - batch.terminated.astype(jnp.float32)
-    )
+    target = G + (gamma**n) * next_q * (1.0 - term_cut.astype(jnp.float32))
     target = jax.lax.stop_gradient(target)
-    # A dead transition fabricates a link between two episodes and must
-    # never train: mask it out rather than skip the add, since a per-sample
+    # A dead window fabricates a link between two episodes and must never
+    # train: mask it out rather than skip the add, since a per-sample
     # lax.cond on `dead` would also lower to a select and add it anyway.
-    valid = ~batch.dead
+    valid = ~batch.dead[:, 0]
     return jnp.sum(valid * jnp.square(q_a - target)) / jnp.maximum(
         jnp.sum(valid), 1
     )
@@ -182,6 +196,7 @@ class DDQNConfig:
     LR: float = 3e-4
     BUFFER_SIZE: int = 100_000
     BATCH_SIZE: int = 64
+    N_STEP: int = 1
     TOTAL_TIMESTEPS: int = 200_000
     LEARNING_STARTS: int = 1_000
     TRAIN_FREQUENCY: int = 1
@@ -212,12 +227,13 @@ def make_train(
             case 'mlp': return QNetwork(obs_dim, action_dim, config.HIDDEN_SIZE, key)
             case _: raise ValueError(f"unknown NETWORK_PRESET {config.NETWORK_PRESET!r}")
 
-    buffer = fbx.make_item_buffer(
-        max_length=config.BUFFER_SIZE,
-        min_length=config.BATCH_SIZE,
+    buffer = fbx.make_trajectory_buffer(
+        add_batch_size=1,
         sample_batch_size=config.BATCH_SIZE,
-        add_sequences=False,
-        add_batches=False,
+        sample_sequence_length=config.N_STEP + 1,
+        period=1,
+        min_length_time_axis=max(config.BATCH_SIZE, config.N_STEP + 1),
+        max_length_time_axis=config.BUFFER_SIZE,
     )
     optimizer = optax.adam(config.LR, eps=config.ADAM_EPS)
 
@@ -227,7 +243,6 @@ def make_train(
             obs=zeros,
             action=jnp.asarray(0, dtype=jnp.int32),
             reward=jnp.asarray(0.0, dtype=jnp.float32),
-            next_obs=zeros,
             terminated=jnp.asarray(False),
             truncated=jnp.asarray(False),
             dead=jnp.asarray(False),
@@ -269,19 +284,18 @@ def make_train(
             # prev_done is True, this transition is the fabricated dead step
             # linking two episodes. It is stored (dead=True) so the buffer
             # stays a plain, uniform stream, then masked out of the loss below.
-            buffer_state = buffer.add( # TODO: this buffer is storing each obs twice,
-                                        # we should add custom Flashbax flat buffers that store each obs once,
-                                        # do not store duplicated frames, support n-step updates, and this would be where we build endpoint replay into DDQN
-                                        # note endpoint will requiring storing or accessing next action as well as next state.
+            buffer_state = buffer.add(
                 buffer_state,
-                TimeStep(
-                    obs=last_obs,
-                    action=action,
-                    reward=reward,
-                    next_obs=obsv,
-                    terminated=terminated,
-                    truncated=truncated,
-                    dead=prev_done,
+                jax.tree.map(
+                    lambda x: x[None, None, ...],
+                    TimeStep(
+                        obs=last_obs,
+                        action=action,
+                        reward=reward,
+                        terminated=terminated,
+                        truncated=truncated,
+                        dead=prev_done,
+                    ),
                 ),
             )
 

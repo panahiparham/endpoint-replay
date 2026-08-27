@@ -116,14 +116,13 @@ def _run_agent(env, *, total, buffer_size=64, **overrides):
 
 
 def _buffer(out):
-    """Flat per-transition arrays actually written to the item buffer, in add order:
-    ``{"obs", "next_obs", "terminated", "truncated", "dead"}`` (each length = #adds)."""
+    """Flat per-transition arrays actually written to the trajectory buffer, in add
+    order: ``{"obs", "terminated", "truncated", "dead"}`` (each length = #adds)."""
     bs = out["runner_state"].buffer_state
     n = int(np.asarray(bs.current_index))
     exp = bs.experience
     return {
         "obs": np.asarray(exp.obs).reshape(-1)[:n],
-        "next_obs": np.asarray(exp.next_obs).reshape(-1)[:n],
         "terminated": np.asarray(exp.terminated).reshape(-1)[:n].astype(bool),
         "truncated": np.asarray(exp.truncated).reshape(-1)[:n].astype(bool),
         "dead": np.asarray(exp.dead).reshape(-1)[:n].astype(bool),
@@ -172,17 +171,17 @@ def test_pinball_split_and_truncation_at_cutoff():
 
 @pytest.mark.parametrize("mode", ["terminated", "truncated"])
 def test_buffer_stores_true_boundary_next_obs(mode):
-    """The transition at an episode boundary stores the *true* terminal/truncation
-    observation as ``next_obs``. The *following* transition is the fabricated
-    NEXT_STEP dead step: it is tagged ``dead=True``, carries the true boundary
-    obs forward as its own ``obs``, and lands on the reset obs as ``next_obs``.
-    The transition after THAT starts the new episode from the reset obs.
+    """The transition at an episode boundary is followed (at ``obs[k+1]``) by the
+    *true* terminal/truncation observation. The *following* transition is the
+    fabricated NEXT_STEP dead step: it is tagged ``dead=True``, carries the true
+    boundary obs forward as its own ``obs``, and its successor lands on the reset
+    obs. The transition after THAT starts the new episode from the reset obs.
 
     This is the property that makes a truncated transition bootstrap from the
     correct state - the most error-prone part of the loop.
     """
     env = FakeEnv(period=3, mode=mode)
-    buf = _buffer(_run_agent(env, total=7))
+    buf = _buffer(_run_agent(env, total=8))
 
     flag = buf[mode]
     other = buf["truncated" if mode == "terminated" else "terminated"]
@@ -193,36 +192,16 @@ def test_buffer_stores_true_boundary_next_obs(mode):
     assert list(ends) == [2, 6]
     # only the intended flag fires
     assert not other.any()
-    # next_obs at a boundary is the true terminal obs (counter==3.0), NOT reset(-1)
-    np.testing.assert_array_equal(buf["next_obs"][ends], [3.0, 3.0])
+    # the obs right after a boundary is the true terminal obs (counter==3.0), NOT reset(-1)
+    np.testing.assert_array_equal(buf["obs"][ends + 1], [3.0, 3.0])
 
     dead_idx = ends[0] + 1
     assert buf["dead"][dead_idx]
     assert buf["obs"][dead_idx] == 3.0            # the true boundary obs, carried
-    assert buf["next_obs"][dead_idx] == FakeEnv.RESET_OBS
     assert buf["obs"][dead_idx + 1] == FakeEnv.RESET_OBS   # new episode starts here
 
     # first obs is the initial reset
     assert buf["obs"][0] == FakeEnv.RESET_OBS
-
-
-def test_buffer_next_obs_matches_within_episode_continuity():
-    """Every stored transition chains to the next: ``next_obs[i] == obs[i+1]``
-    holds even across a boundary, since the NEXT_STEP dead step is itself a
-    stored transition rather than a skip - the chain never breaks. What marks
-    the dead step as not a real transition is ``dead``, not a break in obs
-    continuity."""
-    env = FakeEnv(period=4, mode="terminated")
-    buf = _buffer(_run_agent(env, total=9))
-    for i in range(len(buf["obs"]) - 1):
-        assert buf["next_obs"][i] == buf["obs"][i + 1]
-
-    ends = np.flatnonzero(buf["terminated"])
-    dead = np.flatnonzero(buf["dead"])
-    assert list(ends) == [3, 8]
-    assert list(dead) == [4]                          # only the first boundary's
-                                                        # dead step falls in range
-    assert buf["next_obs"][dead[0]] == FakeEnv.RESET_OBS
 
 
 # ===========================================================================
@@ -261,7 +240,6 @@ def test_ddqn_target_masks_terminated_not_truncated():
     tb = _buffer(_run_agent(term_env, total=40))
     ub = _buffer(_run_agent(trunc_env, total=40))
     np.testing.assert_array_equal(tb["obs"], ub["obs"])
-    np.testing.assert_array_equal(tb["next_obs"], ub["next_obs"])
     assert tb["terminated"].any() and not tb["truncated"].any()
     assert ub["truncated"].any() and not ub["terminated"].any()
 
@@ -284,12 +262,13 @@ def test_ddqn_no_termination_matches_pure_truncation():
 
 
 def test_dead_transition_masked_out_of_the_loss():
-    """``_masked_td_loss`` must give a dead-tagged row zero weight.
+    """``_masked_td_loss`` must give a dead-tagged window zero weight.
 
-    A batch with two dead rows holding extreme (obs, action, reward,
-    next_obs) values - the kind that would blow up the loss if they trained -
-    must produce EXACTLY the loss of the same batch with those rows dropped.
-    A batch of only dead rows must return 0, not NaN or a division artifact.
+    A batch with two dead windows holding extreme (obs, action, reward)
+    values - the kind that would blow up the loss if they trained - must
+    produce EXACTLY the loss of the same batch with those windows dropped.
+    A batch of only dead windows must return 0, not NaN or a division
+    artifact.
     """
     from agents.ddqn import QNetwork, TimeStep, _masked_td_loss
 
@@ -298,23 +277,29 @@ def test_dead_transition_masked_out_of_the_loss():
     target_q = QNetwork(obs_dim=1, action_dim=2, hidden_size=4, key=tkey)
 
     live = TimeStep(
-        obs=jnp.array([[0.0], [1.0], [2.0]], jnp.float32),
-        action=jnp.array([0, 1, 0], jnp.int32),
-        reward=jnp.array([1.0, -1.0, 0.5], jnp.float32),
-        next_obs=jnp.array([[1.0], [2.0], [0.0]], jnp.float32),
-        terminated=jnp.array([False, True, False]),
-        truncated=jnp.array([False, False, False]),
-        dead=jnp.array([False, False, False]),
+        obs=jnp.array(
+            [[[0.0], [1.0]], [[1.0], [2.0]], [[2.0], [0.0]]], jnp.float32
+        ),
+        action=jnp.array([[0, 0], [1, 0], [0, 0]], jnp.int32),
+        reward=jnp.array([[1.0, 0.0], [-1.0, 0.0], [0.5, 0.0]], jnp.float32),
+        terminated=jnp.array(
+            [[False, False], [True, False], [False, False]]
+        ),
+        truncated=jnp.array(
+            [[False, False], [False, False], [False, False]]
+        ),
+        dead=jnp.array([[False, False], [False, False], [False, False]]),
     )
     # extreme enough that an unmasked mean would clearly move
     dead = TimeStep(
-        obs=jnp.array([[999.0], [-999.0]], jnp.float32),
-        action=jnp.array([1, 0], jnp.int32),
-        reward=jnp.array([12345.0, -12345.0], jnp.float32),
-        next_obs=jnp.array([[999.0], [-999.0]], jnp.float32),
-        terminated=jnp.array([False, False]),
-        truncated=jnp.array([False, False]),
-        dead=jnp.array([True, True]),
+        obs=jnp.array(
+            [[[999.0], [999.0]], [[-999.0], [-999.0]]], jnp.float32
+        ),
+        action=jnp.array([[1, 0], [0, 0]], jnp.int32),
+        reward=jnp.array([[12345.0, 0.0], [-12345.0, 0.0]], jnp.float32),
+        terminated=jnp.array([[False, False], [False, False]]),
+        truncated=jnp.array([[False, False], [False, False]]),
+        dead=jnp.array([[True, False], [True, False]]),
     )
     full = jax.tree.map(lambda a, b: jnp.concatenate([a, b]), live, dead)
 
