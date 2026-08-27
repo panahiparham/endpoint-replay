@@ -161,8 +161,8 @@ def test_truncated_transition_stores_true_obs():
     # truncations only, at the same cadence a real EPISODE_CUTOFF would fire
     env = AtariEnvLike(_FakeVectorEnv(period=CUTOFF, mode="truncated"))
     from agents.ddqn import DDQNConfig, make_train
-    cfg = DDQNConfig(TOTAL_TIMESTEPS=9, BUFFER_SIZE=16, BATCH_SIZE=2,
-                     LEARNING_STARTS=9,
+    cfg = DDQNConfig(TOTAL_TIMESTEPS=10, BUFFER_SIZE=16, BATCH_SIZE=2,
+                     LEARNING_STARTS=10,
                      # no training: pure buffer inspection
                      NETWORK_PRESET="atarinet")
     out = jax.block_until_ready(jax.jit(make_train(cfg, env, None))(jax.random.key(0)))
@@ -175,7 +175,6 @@ def test_truncated_transition_stores_true_obs():
     dead = np.asarray(exp.dead)[0][:n].astype(bool)
     # every pixel of a fake frame carries the step counter, so one pixel
     # identifies the frame
-    nxt = np.asarray(exp.next_obs)[0][:n].reshape(n, -1)[:, 0]
     obs = np.asarray(exp.obs)[0][:n].reshape(n, -1)[:, 0]
 
     ends = np.flatnonzero(trunc)
@@ -184,15 +183,11 @@ def test_truncated_transition_stores_true_obs():
     assert list(ends) == [CUTOFF - 1, 2 * CUTOFF]
     # a cutoff truncates, never terminates
     assert not term.any()
-    # the TRUE pre-truncation frame
-    np.testing.assert_array_equal(nxt[ends], [CUTOFF, CUTOFF])
-    # 0 == fresh-episode frame == the bug
-    assert (nxt[ends] != 0).all()
-    # the dead step carries the true boundary frame forward as `obs`, and is
-    # the only place `next_obs` jumps to the reset sentinel
+    # the TRUE pre-truncation frame, at obs[k+1] for the boundary at k
+    np.testing.assert_array_equal(obs[ends + 1], [CUTOFF, CUTOFF])
+    # the dead step carries the true boundary frame forward as `obs`
     assert dead[ends[0] + 1]
     assert obs[ends[0] + 1] == CUTOFF
-    assert nxt[ends[0] + 1] == 0
     # the transition after that starts the new episode from the reset
     assert obs[ends[0] + 2] == 0
 
@@ -380,7 +375,7 @@ def test_atari_real_truncated_transition_is_not_the_reset_obs():
     exp = bs.experience
     trunc = np.asarray(exp.truncated)[0][:n].astype(bool)
     dead = np.asarray(exp.dead)[0][:n].astype(bool)
-    nxt, obs = np.asarray(exp.next_obs)[0][:n], np.asarray(exp.obs)[0][:n]
+    obs = np.asarray(exp.obs)[0][:n]
 
     ends = np.flatnonzero(trunc)
     # exact cutoff, twice in 45 steps; the first dead step shifts the second
@@ -388,11 +383,8 @@ def test_atari_real_truncated_transition_is_not_the_reset_obs():
     assert list(ends) == [CUTOFF - 1, 2 * CUTOFF]
     for e in ends:
         assert dead[e + 1], "the step after a boundary must be the dead step"
-        np.testing.assert_array_equal(obs[e + 1], nxt[e], err_msg=(
-            "the dead step should carry the true boundary frame forward "
-            "as its own obs"))
-        assert not np.array_equal(nxt[e], nxt[e + 1]), (
-            "the dead step's next_obs equals the boundary's own frame -> "
+        assert not np.array_equal(obs[e + 1], obs[e + 2]), (
+            "the dead step's successor equals the boundary's own frame -> "
             "it is not a fresh episode's first frame, i.e. the issue #1 bug")
 
 
