@@ -100,6 +100,28 @@ class AtariNet(eqx.Module):
         return self.out(x)
 
 
+def _epsilon_greedy_action(
+    q_values: jax.Array, epsilon: jax.Array, action_dim: int, key: jax.Array
+) -> jax.Array:
+    """Sample one action from the epsilon-greedy policy over ``q_values``.
+
+    Args:
+        q_values: Action values for a single observation.
+        epsilon: Probability of acting uniformly at random.
+        action_dim: Number of discrete actions.
+        key: PRNG key for the draw.
+
+    Returns:
+        The sampled action. Greedy mass is split evenly across every action
+        tied for the maximum, so ties break uniformly at random rather than
+        toward the lowest index.
+    """
+    is_max = q_values == jnp.max(q_values)
+    greedy_probs = is_max / jnp.sum(is_max)
+    probs = epsilon / action_dim + (1.0 - epsilon) * greedy_probs
+    return jax.random.categorical(key, jnp.log(probs)).astype(jnp.int32)
+
+
 def _masked_td_loss(
     q: QNetwork, target_q: QNetwork, batch: TimeStep, gamma: float
 ) -> jax.Array:
@@ -232,16 +254,12 @@ def make_train(
                 * (t / (config.TOTAL_TIMESTEPS * config.EPSILON_FRACTION)),
             )
 
-            (rng, action_key, explore_key,
-             step_key, train_key) = jax.random.split(rng, 5)
+            rng, action_key, step_key, train_key = jax.random.split(rng, 4)
 
             q_values = q(last_obs)
-            greedy_action = jnp.argmax(q_values).astype(jnp.int32) # TODO: add random tie breaking
-            random_action = jax.random.randint(
-                action_key, (), 0, action_dim, dtype=jnp.int32
+            action = _epsilon_greedy_action(
+                q_values, epsilon, action_dim, action_key
             )
-            explore = jax.random.uniform(explore_key, ()) < epsilon # TODO: maybe build the e-greedy policy and directly sample from it
-            action = jnp.where(explore, random_action, greedy_action)
 
             obsv, env_state, reward, terminated, truncated, info = env.step(
                 step_key, env_state, action, env_params
