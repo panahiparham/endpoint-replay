@@ -182,6 +182,7 @@ class DDQNConfig:
     LR: float = 3e-4
     BUFFER_SIZE: int = 100_000
     BATCH_SIZE: int = 64
+    N_STEP: int = 1
     TOTAL_TIMESTEPS: int = 200_000
     LEARNING_STARTS: int = 1_000
     TRAIN_FREQUENCY: int = 1
